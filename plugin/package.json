@@ -1,0 +1,30 @@
+{
+  "name": "@local/dsh-helm",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "HELM — an Agent mission cockpit for DeepSeek Harness: tasks, plans, approvals, evidence and context ledgers instead of a chat log.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  }
+}

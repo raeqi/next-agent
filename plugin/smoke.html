@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>HELM · 插件冒烟测试</title>
+<style>html,body{margin:0;height:100%;background:#0c0e10} #composer{display:flex;align-items:center;gap:8px;padding:12px;border-bottom:1px solid #333} .helm-entry-btn{color:#ccc}</style>
+</head>
+<body>
+<!--
+  插件半冒烟：不启动 Harness，用最小 React + Slots mock 复现「动态 client 模块」环境，
+  验证 plugin/client.js 能被 factory 加载、注册到 composer 槽位、点击后挂载驾驶舱。
+-->
+<div id="composer"></div>
+
+<script>
+  window.__ModuleLoader__ = { load(definition) { window.__HELM_DEF__ = definition; } };
+
+  // 最小 React：只够渲染一个无状态入口按钮（真实插件里 EntryButton 不用 hooks）
+  const React = {
+    createElement(tag, props, ...children) {
+      const node = document.createElement(tag);
+      const attrs = props || {};
+      for (const key of Object.keys(attrs)) {
+        const value = attrs[key];
+        if (value === null || value === undefined || value === false) continue;
+        if (key === 'className') node.className = value;
+        else if (key === 'html') node.innerHTML = value;
+        else if (key === 'onClick') node.addEventListener('click', value);
+        else if (key === 'style') Object.assign(node.style, value);
+        else node.setAttribute(key, value === true ? '' : String(value));
+      }
+      for (const child of children.flat()) {
+        if (child === null || child === undefined) continue;
+        node.appendChild(child instanceof Node ? child : document.createTextNode(String(child)));
+      }
+      return node;
+    },
+  };
+  window.require = (name) => (name === 'react' ? React : {});
+</script>
+
+<script src="/plugin/client.js"></script>
+
+<script>
+  const results = [];
+  const ok = (name, extra) => results.push({ name, pass: true, extra });
+  const bad = (name, extra) => results.push({ name, pass: false, extra });
+
+  try {
+    const definition = window.__HELM_DEF__;
+    if (!definition || definition.id !== '@local/dsh-helm') bad('模块声明 id 正确', String(definition && definition.id));
+    else ok('模块声明 id 正确');
+
+    const moduleHalf = definition.factory(window.require);
+    if (!moduleHalf || typeof moduleHalf.apply !== 'function') bad('factory 返回 apply');
+    else ok('factory 返回 apply');
+
+    const registrations = [];
+    const slots = {
+      inject(name, fn) { fn(); },
+      register(descriptor, component) { registrations.push({ descriptor, component }); },
+    };
+    const ctx = {
+      effect(fn) { try { fn(); } catch (error) { console.error('effect failed', error); } },
+      get(name) { return name === 'slots' ? slots : undefined; },
+    };
+    moduleHalf.apply(ctx);
+
+    const entry = registrations.find((r) => r.descriptor.id === 'helm-entry');
+    if (!entry) bad('注册到 composer 槽位');
+    else {
+      ok('注册到 composer 槽位', entry.descriptor.name);
+      const button = entry.component();
+      document.getElementById('composer').appendChild(button);
+      if (!document.querySelector('.helm-entry-btn')) bad('入口按钮渲染');
+      else ok('入口按钮渲染');
+      document.querySelector('.helm-entry-btn').click();
+      setTimeout(() => {
+        const cockpit = document.querySelector('[data-testid="helm-root"]');
+        if (cockpit) ok('点击后驾驶舱挂载'); else bad('点击后驾驶舱未挂载');
+        const title = document.querySelector('[data-testid="mission-title"]');
+        if (title && title.textContent) ok('任务标题渲染', title.textContent); else bad('任务标题缺失');
+        const buttons = document.querySelectorAll('.h-btn').length;
+        if (buttons >= 3) ok('交互控件渲染', buttons + ' 个按钮'); else bad('按钮数量异常', buttons);
+        const style = document.querySelector('style[data-helm="styles"]');
+        if (style && style.textContent.length > 20000) ok('样式注入', (style.textContent.length / 1024).toFixed(0) + ' KB'); else bad('样式未注入');
+        window.__SMOKE__ = results;
+      }, 700);
+    }
+    if (!entry) window.__SMOKE__ = results;
+  } catch (error) {
+    bad('插件加载抛错', error.message);
+    window.__SMOKE__ = results;
+  }
+</script>
+</body>
+</html>
