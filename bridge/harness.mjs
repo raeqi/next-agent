@@ -57,6 +57,7 @@ export class Harness {
       cwd: this.o.cwd,
       provider: 'deepseek-official',
       model: this.o.model,
+      ...(this.o.reasoningEffort ? { reasoningEffort: this.o.reasoningEffort } : {}),
     }, 60_000)
     return init
   }

@@ -1,5 +1,0 @@
-# HELM bundle patch：挂上携带 Client 半的插件行。
-- insert:
-    - id: helm
-      name: '@local/dsh-helm'
-      config: {}

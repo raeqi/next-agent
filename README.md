@@ -1,147 +1,95 @@
-# HELM · Agent 任务驾驶舱（2026 产品原型）
+# 拾遗 · 一个不用吩咐的个人 Agent
 
-> 一句话：**把对话从主界面降级成例外通道，把「委托」做成第一屏。**
-> 一份可运行的 DeepSeek Harness 客户端插件 + 一份判断文档。
+> 你在微信里随口答应别人的事，它记下、提前做好，在对的时候带着草稿来找你；
+> 你说一句「不对」，它就多学会一条你的做事方式。
 
-![打开时：任务在等你裁定一个数据冲突](shots/01-open.png)
+这是一个**跑在你自己 Mac 上的 agent 应用**：
+- 一只浮在所有窗口上方的桌宠；
+- 一双只看微信、在本机做 OCR 的「眼睛」；
+- 背后由 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 驱动的 DeepSeek agent，负责判断和起草。
 
----
-
-## 这是什么
-
-2026 年，Agent 已经能连续跑几十分钟到几小时，但主流界面仍然是聊天框。聊天框装不下任务需要的东西：**进度、预算、权限、交付物、证据、可回滚性**。
-
-HELM 是这些对象的界面容器，三栏一句话分工：
-
-| 栏 | 回答的问题 |
-| --- | --- |
-| 左：舰队 | 今天我派出去的事，现在都在什么状态？谁需要我？ |
-| 中：任务 | 这件事的意图是什么、计划怎么拆、agent 正在做什么、卡在哪？ |
-| 右：托盘 | 需要我决定什么、依据是哪几条来源、这次读了多少上下文、交付物长什么样？ |
-
-六个必须被看见的对象，及其对应的 harness 能力：
-
-| 界面对象 | 它解决的问题 | Harness 能力 |
-| --- | --- | --- |
-| 意图（大字原文） | 人给的是目标，不是指令序列 | session / prompt |
-| 可审的计划 | 计划本身就是人机对齐点 | plan mode、todo |
-| 执行流 | 任务越长日志越不可读，要能按步过滤 | session trace、工具调用、subagent |
-| 例外收件箱 | 人只该出现在不确定处 | approval、permission、sandbox |
-| 证据链 / 自检 | 交付物要能离线自证 | 事件流、deliverables、可回放 |
-| 上下文账本 / 预算 | 黑箱感的真正来源 | context、compaction、记忆、成本 |
-
-任务头上还有一枚小徽标「**托管把握 80%**」——这是模型趋势判断在界面上的唯一直接投影：能力要看 50% 时程，产品必须按 80% 时程承诺（METR 的可靠性折扣是 4–6 倍）。
-
-判断与依据见 **[docs/思考与判断.md](docs/思考与判断.md)**（趋势数据与 31 个一手来源见 [docs/research-trends.md](docs/research-trends.md)）。
+产品判断与设计见 [docs/proactive-agent/PRD.md](docs/proactive-agent/PRD.md) 和 [docs/proactive-agent/ARCHITECTURE.md](docs/proactive-agent/ARCHITECTURE.md)。
 
 ---
 
-## 30 秒上手
+## 它在做什么
 
-### 路线 A：在 DeepSeek Harness 里跑（推荐，已装好）
+```
+微信窗口 ──截图(本机)──▶ Vision OCR(本机) ──▶ 会话名 + 谁说了什么 + 哪些是新消息
+                                                        │
+                       L0 本机规则：像不像一个承诺？（不花钱，绝大多数到此为止）
+                                                        │
+                       L1 deepseek-v4-flash：是不是要兑现的承诺？对象、事项、时间
+                                                        │  记下（桌宠点头，不出声）
+                       L2 deepseek-v4-pro（Harness agent）：翻聊天和你的文件夹，
+                          在 ~/.shiyi/workspace/shadow/ 写好「要发的话」和文档，材料不够就写「缺什么」
+                                                        │
+                       在对的时候开口：离截止 4 小时内马上说，否则截止当天早上说
+                                                        │
+              你：复制并打开微信（最后一下由你按）/ 改一下（→ 它想想能否学成规则）/ 不用了
+                                                        │
+              你在微信里发出去了 → 它看到了，自动划掉
+```
 
-已作为 bundle 安装进本机 desktop profile（`@local/dsh-helm@0.1.0`，`link:` 安装）。
+- **只看微信**：前台不是微信时什么都不截；私密应用在前台时桌宠闭眼；随时可以手动闭眼。
+- **截图和 OCR 都在本机**，送去模型的只有识别出的文字。
+- **原件永远不碰**：agent 只能写 `~/.shiyi/workspace/shadow/`，由 Harness sandbox 强制保证。
+- **越用越像你**：你确认过的规则写进 `~/.shiyi/workspace/AGENTS.md`，之后每次起草都会先读。
+- **18:30 下班收尾**：列出今天答应的事，标出哪些已兑现、哪些还在等你。
 
-1. 刷新 Harness 页面。
-2. 在任意会话的输入框左侧工具行，点**罗盘图标**（麦克风旁边）。
-3. 全屏驾驶舱打开。
+## 跑起来
 
-### 路线 B：独立跑（不需要 Harness，离线可用）
+需要：macOS 14+、Xcode Command Line Tools、Node 22+、[DeepSeek Harness 桌面版](https://github.com/deepseek-ai/deepseek-harness)（已登录或配置好 DeepSeek API key）、Mac 版微信。
 
 ```bash
-node demo/serve.mjs --port 7788
-# 打开 http://127.0.0.1:7788
+sh scripts/build-native.sh        # 构建 native/build/Shiyi.app（桌宠 + 眼睛）
+node daemon/main.mjs              # 启动后台，并自动打开桌宠
 ```
 
-独立版与插件版是**同一份源码、同一份 UI**，只是宿主不同。
+第一次运行时：
+1. 桌宠会提示需要「屏幕录制」权限。点气泡打开系统设置，在「隐私与安全性 → 屏幕录制」里勾选 **Shiyi**。
+2. 退出桌宠（鼠标移到桌宠上 → 退出），再重新执行一次 `node daemon/main.mjs`。
+3. 打开微信，进入一个聊天。第一次看到的会话只当作历史上下文，不会触发。接着发一句「明天上午发你周报」试试。
 
----
+鼠标移到桌宠上会出现菜单：**闭眼 / 今天 / 它看到了什么 / 手册 / 退出**。
 
-## 三分钟的演示脚本
+配置在 `~/.shiyi/config.json`：
+- `materials`：agent 可以只读查找材料的目录
+- `privateApps`、`ignoreConvs`：私密应用名单、不看的会话
+- `morningAt`、`wrapUpAt`：早上开口和下班收尾的时间
+- `speakBudgetPerHour`：每小时最多主动开口几次
+- `wechatListWidth`：会话列表宽度，自动识别不准时手动填
 
-打开后，任务「竞品周报」正停在等你裁定。照着做就能看到三个设计主张：
-
-1. **人只在例外处出现**
-   右栏「待你处理」里是一条数据冲突：官方文档说 Cursor 3 已 GA，第三方报道说仍在小范围 beta。
-   选「两个都写，标注状态差异」→ agent 继续跑（执行流里出现绿色的「你的裁定」）。
-2. **高风险动作要留痕**
-   agent 写完周报后会停下来问「把这页发到飞书给老板？」。
-   在顶部把自主档位切到 **自动**，再重跑一次这个任务 —— 同样的发送会被自动放行（审批卡上写着「按『自动』档位直接发送」）。
-   批准后切到「交付物」tab：绿色回执 + 论断↔来源编号 + 自检清单（2 项通过、2 项存疑）。
-3. **共享驾驶，不是二选一**
-   选中「《Agent 计费》PRD 评审」→ 点「接管」→ 改一句话方向 → 「交还并继续」，执行流里会出现人工介入记录，后续步骤加速。
-   另外：左栏「+ 派一个新任务」写任意意图，会当场从零跑一遍剧本（这是真的在跑状态机，不是静态稿）。
-
-键盘：`1–4` 切右栏 tab，`P` 暂停/继续，`Esc` 关闭（接管态下 `Esc` 先取消接管）。
-
-| 交付物 + 证据 | 接管 |
-| --- | --- |
-| ![交付物](shots/03-artifact.png) | ![接管](shots/05-takeover.png) |
-| ![证据链](shots/03b-evidence.png) | ![上下文账本](shots/03c-context.png) |
-
----
-
-## 实现结构
-
-**零依赖、零框架**：原生 DOM + CSS，不用 npm、React、TS、构建工具（构建脚本只用 `node:fs`）。
+## 目录
 
 ```
-app/
-  src/
-    tokens.css          设计令牌（夜间驾驶舱：石墨底 / 暖白字 / 单一琥珀信号色）
-    app.css             壳层布局 + 共享组件
-    dom.js              工具 H：元素构造、图标、格式化、markdown 子集
-    scenario.js         剧本数据：4 个任务、7 条证据、1 份周报、3 个模板
-    engine.js           状态机：任务时间线、审批阻塞、autoResolve、接管、回放、预算
-    view-fleet.js       左栏：舰队分组 + 新建任务
-    view-mission.js     中栏：意图 / 计划 / 执行流 / 接管抽屉
-    view-panels.js      右栏：待你处理 / 证据 / 上下文 / 交付物
-    main.js             装配：顶栏、订阅、键盘、Toast、挂载
-  build.mjs             拼接 → dist/index.html + plugin/client.js
-plugin/                 DeepSeek Harness bundle（bundle patch + 动态 client 模块）
-demo/serve.mjs          零依赖静态服务器
-scripts/                构建/截图/端到端/插件冒烟/引擎测试
-shots/                  演示截图（由 scripts/e2e.mjs 生成）
-docs/                   判断与趋势研究
+native/Shiyi.swift      桌宠窗口 + 微信截图 + Vision OCR（原生，约 200 行）
+daemon/                 后台：wechat.mjs 版式解析与去重 · agent.mjs Harness 接线与手册 · main.mjs 筛选/开口/操作/HTTP
+pet/                    桌宠页面（跑在原生透明窗口里）
+bridge/harness.mjs      零依赖 DeepSeek Harness SDK 客户端（stdio JSON-RPC）
+scripts/                build-native.sh · sim-wechat.mjs（不开微信也能测）· pet-shots.mjs · desktop-e2e.mjs
+desktop/ workspace-seed/  「林夏的一天」演示模式（给评审 5 分钟看完整故事，剧本数据）
+docs/                   产品文档、框架设计、2026 趋势研究
 ```
 
-两个产物的关系：`build.mjs` 把同一份 `app/src` 拼成一个 IIFE，分别包进
-①独立页（`Helm.mount`）和 ②Harness 客户端模块（`__ModuleLoader__.load` → `slots.register` 入口按钮 → 全屏 overlay）。
-
-**与真实 Harness 的接线点**（真接模型时的顺序）：
-`session` 事件流 → 执行流与计划；`approval` / `permission` → 例外收件箱与三档策略；
-`deliverables` → 交付物与证据挂载；`session-query` → 回放；`jobs` + 成本计量 → 预算闸门。
-
----
-
-## 自动化验证（都在本机跑过）
+## 不开微信也能测
 
 ```bash
-node app/build.mjs                 # 构建两个产物
-node scripts/engine.test.mjs       # 15/15：审批阻塞、autoResolve 档位、接管、回放、新建任务
-node scripts/e2e.mjs               # 17/17：三栏渲染 + 裁定→发送→交付 + 证据/上下文 + 接管 + 新建 + 1280 窄屏 + 无 JS 报错
-node scripts/plugin-smoke.mjs      # 8/8：在最小 React+Slots 环境下加载 plugin/client.js，注册入口并挂载
-node scripts/shot.mjs <url> <out.png> 1600 1000 2000
+SHIYI_HOME=/tmp/shiyi-test node daemon/main.mjs --no-pet --port 7811
+node scripts/sim-wechat.mjs 7811 王建国 "other:能先给我一版竞品对比吗"
+node scripts/sim-wechat.mjs 7811 王建国 "other:能先给我一版竞品对比吗" "me:好的王总，明天上午发你竞品对比"
 ```
 
-`scripts/e2e.mjs` 用 CDP 直接驱动本机 Chrome（不装 playwright），既做回归也负责生成 `shots/` 里的截图。
+第一条消息会被当作历史上下文；第二条会走完 L0 → L1 → L2 的真实链路。用浏览器打开 http://127.0.0.1:7811/pet/?view=insight 可以看到每一步。
 
----
-
-## 边界（诚实说明）
-
-- **这是交互原型，不是接了真实模型的 agent。** 剧本模拟运行过程，界面右上角常驻「演示数据」标签；所有公司动态、数字、链接都是为演示编写的（文中的 2026 行业数字来自 `docs/research-trends.md` 的检索，但不代表真实新闻）。
-- **它是真的可运行**：状态机、审批流、接管、回放、下载交付物、新建任务都是真实逻辑；插件也真的装在当前 Harness profile 里。
-- **没有做的**：聊天输入框、拟人头像/情绪动画、多 agent 社会、自动播放的炫酷动画。理由见 [思考文档 §3](docs/思考与判断.md)。
-
-## 回滚
+## 演示模式
 
 ```bash
-plugin_manager remove_bundle @local/dsh-helm
+node desktop/serve.mjs            # http://127.0.0.1:7799 ，按 → 一幕一幕看「林夏的一天」
 ```
 
-## 文档
+## 边界
 
-- [从对话到委托：我给 2026 Agent 产品的三个判断](docs/思考与判断.md) —— **建议先读这份**
-- [2026 趋势研究笔记（31 个一手来源）](docs/research-trends.md)
-- [前后端契约（协作时用）](app/CONTRACT.md)
+- 眼睛只认 Mac 版微信，靠版式识别「谁说的」，群聊里对方的名字可能识别不准；可以在 config 里调整会话列表宽度。
+- 「发」永远由你按：拾遗只复制消息、打开微信，并在访达里选中文档。
+- 每次重新构建 `Shiyi.app`，macOS 会把它当成新应用，需要重新授权屏幕录制（ad-hoc 签名的限制）。
