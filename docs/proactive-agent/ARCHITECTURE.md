@@ -2,6 +2,10 @@
 
 版本 v0.2 · 2026-11-11。产品范围见 PRD.md；历史设计见 archive/ARCHITECTURE-v0.1.md。
 
+## 产品目标与触发方式
+
+架构服务于「不用开口，也能主动干活」：以授权应用的屏幕变化为触发，串起感知、上下文理解、介入判断、准备结果与按权限执行。直接委派是补充触发源，不是主动帮助的前提。当前建议与委派执行器尚未完全统一，不代表已有通用多步桌面自主执行能力。
+
 ## 运行结构
 
 native/Shiyi.swift 的 NSPanel + WKWebView 承载 pet/ 界面。原生端报告前台应用，按白名单截取窗口并进行本机 Vision OCR，POST /focus、/observe 给 daemon/main.mjs。界面订阅 /events SSE，向 /action 提交用户操作。
