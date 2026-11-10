@@ -4,7 +4,7 @@
 
 ## 启动
 
-需要 macOS 14+、Xcode Command Line Tools、Node 22+、已配置模型的 DeepSeek Harness。
+需要 macOS 14+、Xcode Command Line Tools、Node 22+、已配置模型的 Harness。
 
 ```sh
 sh scripts/start-desktop.sh
@@ -18,7 +18,7 @@ sh scripts/start-desktop.sh
 - 未允许的应用不读取页面。系统和敏感应用排除，闭眼或暂停会停止观察与执行。
 - 观察权限不包含操作权限。操作分为关闭、单步确认、指定具名文本控件自动填写。
 - 执行前复查页面快照；页面变化则拒绝旧计划。填写后重新读取文本值核对，点击结果保留为未验证，不宣称完成。
-- 页面文字会交给 DeepSeek 模型判断；OCR 在本机执行。材料目录用于只读查找，结果写入 shadow/。
+- 页面文字会交给 模型判断；OCR 在本机执行。材料目录用于只读查找，结果写入 shadow/。
 
 ## 当前能力与边界
 

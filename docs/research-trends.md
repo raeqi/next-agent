@@ -89,8 +89,8 @@
   - 跨仓库多工作区、云端并行 agent、本地↔云端双向交接、`/in-cloud` 云 subagent、`/autopilot` 接管 PR、worktree 隔离；
   - 可从手机 / Web / Slack / GitHub / Linear 操作。
   - （来源：[Cursor Docs · Agents Window](https://cursor.com/docs/agent/agents-window)，2026-04）
-- 【事实】"常驻实体"成为显式设计目标：DeepSeek Harness 团队 2026-11 发布《Super-agent 设计探索》并开源原型 `dsh-superagent-prototype`——四个属性是跨会话保持上下文、并行推进多任务、**主动响应环境事件（不用你 @）**、挂掉自恢复；一批任务的 **p95 完成时间从 29.5 分钟压到 15.7 分钟**。
-  - （来源：[DeepSeek 开源 Super-agent](https://cloud.tencent.cn/developer/article/2774420)，2026-11）
+- 【事实】"常驻实体"成为显式设计目标：Harness 团队 2026-11 发布《Super-agent 设计探索》并开源原型 `dsh-superagent-prototype`——四个属性是跨会话保持上下文、并行推进多任务、**主动响应环境事件（不用你 @）**、挂掉自恢复；一批任务的 **p95 完成时间从 29.5 分钟压到 15.7 分钟**。
+  - （来源：[开源 Super-agent](https://cloud.tencent.cn/developer/article/2774420)，2026-11）
 - 【事实】产品面在按岗位切片：Anthropic 当前产品线已包含 Claude Code、Cowork、**Duet、Tag、Security、Science、Managed Agents**，并把 Skills / Plugins / Connectors 作为独立可售单元。
   - （来源：[Claude 产品导航](https://claude.com/resources/articles/bringing-mcp-2026-07-28-to-claude)，2026-07）
 
@@ -141,25 +141,25 @@
 - 【事实】评测侧的 harness 也在标准化：METR 在 2026-01 把评测基础设施从自研 Vivaria 迁到 UK AISI 的 **Inspect**（开源），并公开了迁移带来的分数差异（部分模型在 Vivaria 下显著更高）——**scaffold 会影响结论**这一点被摆到台面上。
   - （来源：[Time Horizon 1.1](https://metr.org/blog/2026-01-29-time-horizon-1-1/)，2026-01）
 
-### 3.3 DeepSeek Harness（dsh）的定位与特点
+### 3.3 Harness（dsh）的定位与特点
 
 - 【事实】dsh 的定位是**可组合的 harness 运行时**，不是单一 agent 产品：以 Cordis 插件/组合（composition）为装配单位，把 agent loop 之外的能力做成"可选 seam"——`subagent`、`workflow`、skills、memory、sandbox 都是可插拔服务，且**每个上下文只允许一个引擎实现**（第二个通过配置替换第一个）。
-  - （来源：[DSH 文档 · 工作流](https://deepseek-harness.github.io/deepseek-harness/reference/subsystems/workflow.md)，2026）
+  - （来源：DSH 文档 · 工作流（历史来源链接已省略），2026）
 - 【事实】`workflow` seam 允许模型写编排脚本（`agent()` / `pipeline()` / `parallel()` / `phase()`），工程约束做得比多数同类更硬：
   - 每个子 agent 归属明确的 `parent`，cwd/谱系/深度通过 subagent seam 传递；
   - 失败纪律：钩子误用（错参数、未知选项、超上限、schema 超出子集）一律抛 `fatal: true` 并**终止脚本**，绝不消融为"看起来像普通子 agent 失败"；
   - 逐项 `null` 只保留给"子运行失败"和阶段内普通脚本错误。
-  - （来源：[DSH 文档 · 工作流](https://deepseek-harness.github.io/deepseek-harness/reference/subsystems/workflow.md)，2026）
+  - （来源：DSH 文档 · 工作流（历史来源链接已省略），2026）
 - 【事实】dsh 把"可回放"做进了数据模型，这正是"证据链"需要的语义：
   - `workflow/*` 事件（start/phase/log/agent-start/agent-end/end）是**只读数据快照**，逐监听器隔离，`workflow/end` 刻意不带 result value；
   - 父 Session 记录 `run-start`/`run-end` 与成员配对序号，规则是"有开放成员就不能结束运行、运行结束后不能更新"；
   - **"日志尾部缺少 end"被定义为合法的中断证据，而不是损坏**。
-  - （来源：[DSH 文档 · 工作流](https://deepseek-harness.github.io/deepseek-harness/reference/subsystems/workflow.md)，2026）
+  - （来源：DSH 文档 · 工作流（历史来源链接已省略），2026）
 - 【事实】权限模型是"分层收窄 + 拒绝即拒绝"：默认 workspace-write 文件策略，沙箱拒绝后不静默扩大权限；委派深度有上限（本会话即 depth 1，不能再向下 `subagent`）。
   - 对照反面教材：OpenAI 承认内部 agent 测试时**故意不给全套防护**以避免看不到能力上限——这是 Hugging Face 事故的成因之一（见 §5）。
-  - （来源：[DSH 文档](https://deepseek-harness.github.io/deepseek-harness/reference/subsystems/workflow.md)，2026；[METR 参议院证词](https://metr.org/blog/2026-09-30-chris-painter-senate-testimony/)，2026-09）
+  - （来源：DSH 文档（历史来源链接已省略），2026；[METR 参议院证词](https://metr.org/blog/2026-09-30-chris-painter-senate-testimony/)，2026-09）
 - 【事实】dsh 在"常驻化"上已公开原型：Super-agent 的四属性（跨会话上下文、并行多任务、主动事件响应、崩溃自恢复）与 p95 数据均来自官方设计探索。
-  - （来源：[DeepSeek 开源 Super-agent](https://cloud.tencent.cn/developer/article/2774420)，2026-11；[dsh 仓库](https://github.com/deepseek-ai/deepseek-harness)，2026）
+  - （来源：[开源 Super-agent](https://cloud.tencent.cn/developer/article/2774420)，2026-11；dsh 仓库（历史来源链接已省略），2026）
 
 ### 3.4 成本与记忆
 

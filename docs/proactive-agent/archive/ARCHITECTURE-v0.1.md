@@ -6,7 +6,7 @@
 
 
 > 版本 v0.1 · 2026-11-07 · 配套：[产品高阶文档](./PRD.md)
-> 模型：DeepSeek（经 DeepSeek Harness 调用），后续可以换成任意模型。
+> 模型：模型服务（经 Harness 调用），后续可以换成任意模型。
 
 ---
 
@@ -39,7 +39,7 @@
 │        │ ② 任务 prompt                         ▲ ⑤ 会话事件 / 结果          │
 └────────┼────────────────────────────────────────┼──────────────────────────┘
          ▼        dsh-sdk-client（stdio JSON-RPC） │
-┌──────────────────── DeepSeek Harness（dsh --profile sdk） ──────────────────┐
+┌──────────────────── Harness（dsh --profile sdk） ──────────────────┐
 │  agent loop · fs 工具 · schedule · agent-instructions · skill-office        │
 │  ③ 读素材、④ 在 shadow/ 下写草稿、写定时提醒                                │
 │                    工作区 = 「林夏的电脑」(workspace/)                      │
@@ -79,7 +79,7 @@ workspace/
 | 级 | 做法 | 成本 | 例子 |
 |---|---|---|---|
 | L0 规则 | 关键词和模式匹配：承诺句式（「明天发你」「我来跟进」）、数字、重复动作计数 | 零 | 「明天上午发你」命中承诺句式 |
-| L1 轻量模型 | `deepseek-v4-flash`，不开推理，只输出结构化判定 | 极低 | 判定为 `remember`（记进承诺台账），并抽出对象、事项、截止时间 |
+| L1 轻量模型 | `<轻量模型>`，不开推理，只输出结构化判定 | 极低 | 判定为 `remember`（记进承诺台账），并抽出对象、事项、截止时间 |
 | L2 主 agent | 只有判定为 `act` 时才派任务 | 高 | 起草竞品对比 |
 
 L1 的输出格式：`{ verdict: 'ignore'|'remember'|'act', kind, why, deadline?, confidence }`。其中 `why` 会原样展示给用户，作为「我为什么找你」。
@@ -102,7 +102,7 @@ Audit      { at, actor, action, target, decision }
 
 ### 3.4 执行层（Harness）
 
-- 启动方式：`DeepSeekHarness({ profile: 'sdk', provider: 'deepseek-official', model: <主模型> })`，工作目录指向 `workspace/`。
+- 启动方式：`Harness({ profile: 'sdk', provider: '<模型供应商>', model: <主模型> })`，工作目录指向 `workspace/`。
 - **每一类出手对应一个会话**，避免上下文互相污染：起草承诺交付物、数字校验、连锁处理、下班收尾。
 - 任务 prompt 只说明目标和约束，不写死流程：
   「林夏在 {quote} 里答应 {to} 在 {dueAt} 前提供 {what}。请在工作区中找到相关素材，在 shadow/ 下起草交付物。每个论断都标注来源文件和行号。不要修改 shadow/ 以外的任何文件。」
@@ -139,7 +139,7 @@ Audit      { at, actor, action, target, decision }
 
 - 录制器把真跑时的「桌面事件 → 筛选判定 → agent 事件流 → 产物」按时间戳写入 `recordings/<scene>.jsonl`。
 - 前端有两种数据源：`live`（连接 Bridge）和 `replay`（读取录制文件，按原节奏或加速播放）。UI 代码完全共用。
-- 发给评审的静态链接用 `replay`，界面角标注明「真实运行录制 · 2026-11-xx · deepseek-v4」。
+- 发给评审的静态链接用 `replay`，界面角标注明「真实运行录制 · 2026-11-xx · 模型」。
 
 ---
 
@@ -184,7 +184,7 @@ external: 航班 MU5xxx 延误 2 小时
 
 | 需求 | Harness 能力 | 状态 |
 |---|---|---|
-| 调用 DeepSeek 模型 | `llm-deepseek-api-key`，provider `deepseek-official`，模型 `deepseek-v4-pro` / `deepseek-v4-flash` | ✅ M0 已跑通 |
+| 调用 模型 | `<模型凭据配置>`，provider `<模型供应商>`，模型 `<主模型>` / `<轻量模型>` | ✅ M0 已跑通 |
 | 外部程序驱动 agent | SDK 协议（stdio JSON-RPC，`dsh --profile sdk`）。桌面版自带 `dsh` 可执行文件但不带 TS 客户端，所以用 `bridge/harness.mjs` 自写了约 100 行的零依赖客户端 | ✅ M0 已跑通 |
 | 读写素材 | fs 工具（`dsh-base` 自带） | 现成 |
 | 手册注入 | `agent-instructions`：从 `.git` 标记的项目根一路加载到会话工作目录 | ✅ 已确认自动注入 |
@@ -199,8 +199,8 @@ external: 航班 MU5xxx 延误 2 小时
 
 - **写入隔离由 sandbox 强制保证**：会话工作目录设为 `workspace/shadow/`，同时在 `workspace/` 执行 `git init` 作为项目根。这样 sandbox 只允许写 shadow/；写 `docs/` 会被拒绝（`sandbox: file access denied under workspace-write mode`）。sandbox 会提供「申请提权」的选项，但提权要走审批，而 SDK 没有应答方，所以按设计直接拒绝（fail closed）。Bridge 的文件快照校验保留作第二道防线。
 - **手册自动生效**：`agent-instructions` 以 `workspace/` 为项目根，把 AGENTS.md 作为 baseline 注入首轮请求。
-- **效果**：`deepseek-v4-pro` 约 55–70 秒产出一页竞品对比，出处标注 20 处以上且全部可核对；草稿还自发标出了周报里「DAU 12 万」与数据表 10.8 万不一致。场景 2 的素材因此天然成立。
-- 运行：`node bridge/m0.mjs [--model deepseek-v4-flash] [--probe]`；事件流录制在 `recordings/`。
+- **效果**：`<主模型>` 约 55–70 秒产出一页竞品对比，出处标注 20 处以上且全部可核对；草稿还自发标出了周报里「DAU 12 万」与数据表 10.8 万不一致。场景 2 的素材因此天然成立。
+- 运行：`node bridge/m0.mjs [--model <轻量模型>] [--probe]`；事件流录制在 `recordings/`。
 
 ---
 
@@ -208,7 +208,7 @@ external: 航班 MU5xxx 延误 2 小时
 
 - **前端**：原生 DOM + CSS，零依赖、零构建（或只用一个极简的拼接脚本）。打开 `index.html` 就能跑 replay 版，方便发布成静态链接。
 - **Bridge**：Node.js，零依赖（自写 SDK 客户端，调用桌面版自带的 `dsh`；可以用 `DSH_BIN` 指定其他路径）。对外提供 HTTP 接口和 SSE 推送。
-- **模型**：筛选用 `deepseek-v4-flash`（不开推理）；主 agent 用 DeepSeek 主力模型（具体型号以本机 Harness 可用列表为准）。
+- **模型**：筛选用 `<轻量模型>`（不开推理）；主 agent 用 主模型（具体型号以本机 Harness 可用列表为准）。
 - **存储**：全部是 workspace 下的普通文件，可读可 diff，演示前一键重置。
 
 ```
@@ -241,8 +241,8 @@ M1 是按剧本播放的演示。M2 把它做成在自己 Mac 上真跑的应用
 |---|---|
 | 感知 | `native/Shiyi.swift`：微信在前台时每 2.5 秒截一次微信窗口，画面没变就跳过，再用 Vision 在本机做 OCR（中英文），把文字发到 daemon `/observe`。需要「屏幕录制」权限。 |
 | 版式解析 | `daemon/wechat.mjs`：用会话列表右侧的时间列定位分界，顶部文字当会话名，按左右对齐判断谁说的，合并同一气泡的多行，按会话去重。第一次看到的会话只当作历史。 |
-| 筛选 | L0 本机规则（承诺句式）→ L1 `deepseek-v4-flash`（推理关闭，约 1–3 秒）确认，并抽出对象、事项和时间。 |
-| 起草 | L2 `deepseek-v4-pro`（Harness 会话，工作目录是 `~/.shiyi/workspace/shadow`）：读聊天记录和材料目录，写出 `消息.txt`、文档以及 `缺什么.txt`。实测 2–3 分钟。 |
+| 筛选 | L0 本机规则（承诺句式）→ L1 `<轻量模型>`（推理关闭，约 1–3 秒）确认，并抽出对象、事项和时间。 |
+| 起草 | L2 `<主模型>`（Harness 会话，工作目录是 `~/.shiyi/workspace/shadow`）：读聊天记录和材料目录，写出 `消息.txt`、文档以及 `缺什么.txt`。实测 2–3 分钟。 |
 | 开口 | 离截止 4 小时内立刻开口，否则截止当天早上开口；有打扰预算；18:30 下班收尾。 |
 | 操作 | 「复制并打开微信」（pbcopy、打开微信、在访达里选中文档）；你在微信里发出相近的话后，承诺自动划掉。 |
 | 学习 | 「改一下」→ L1 判断这条意见能否成为规则 → 你点头后写进 `AGENTS.md` → 同一会话按意见重写；之后的新草稿会自动遵守。 |
