@@ -11,9 +11,13 @@ mkdirSync(SHADOW, { recursive: true })
 const DEFAULT_CONFIG = {
   // agent 可以只读查找材料的目录
   materials: ['~/Documents', '~/Desktop', '~/Downloads'],
-  // 前台是这些应用时，桌宠闭眼（眼睛本来也只看微信）
-  privateApps: ['com.apple.Passwords', 'com.1password.1password', 'com.agilebits.onepassword7', 'com.apple.keychainaccess'],
-  // 微信里不看的会话（会话名包含即跳过）
+  // 应用白名单：bundle id → 'on'（看）| 'off'（你说不看，不再问）。不在这里的支持应用，第一次打开时会问你
+  apps: {},
+  // 截图间隔（秒）；画面没变时本来就会跳过识别
+  captureIntervalSec: 2.5,
+  // 暂停到这个时间（ISO），空 = 没暂停
+  pauseUntil: '',
+  // 已允许应用里不看的会话（会话名包含即跳过）
   ignoreConvs: [],
   // 微信左侧导航栏 + 会话列表的宽度（pt）；聊天区从这里开始
   wechatListWidth: 0,
@@ -28,12 +32,25 @@ const DEFAULT_CONFIG = {
 const CONFIG_PATH = join(HOME, 'config.json')
 if (!existsSync(CONFIG_PATH)) writeFileSync(CONFIG_PATH, JSON.stringify(DEFAULT_CONFIG, null, 2))
 const rawConfig = { ...DEFAULT_CONFIG, ...JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) }
-export const config = { ...rawConfig, materials: rawConfig.materials.map(p => p.replace(/^~/, homedir())) }
-/** 写回 config.json（只写用户可改的那几项，保留 ~ 写法）。 */
+delete rawConfig.privateApps   // 有了白名单，私密应用名单不再需要
+const expand = c => ({ ...c, materials: c.materials.map(p => p.replace(/^~/, homedir())) })
+export const config = expand(rawConfig)
+export const rawMaterials = () => rawConfig.materials
+/** 写回 config.json（材料目录保留 ~ 写法）。 */
 export function saveConfig(patch) {
-  Object.assign(rawConfig, patch); Object.assign(config, patch)
+  Object.assign(rawConfig, patch)
+  Object.assign(config, expand(rawConfig))
   writeFileSync(CONFIG_PATH, JSON.stringify(rawConfig, null, 2))
 }
+
+/** 拾遗目前适配了版式的应用（能分清谁说的）。只有这些会被问「要不要看」。 */
+export const SUPPORTED_APPS = {
+  'com.tencent.xinWeChat': { name: '微信', parser: 'wechat' },
+  'com.tencent.WeChat': { name: '微信', parser: 'wechat' },
+}
+export const appName = b => SUPPORTED_APPS[b]?.name ?? b
+export const watching = () => Object.keys(SUPPORTED_APPS).filter(b => config.apps[b] === 'on')
+export const paused = () => !!config.pauseUntil && new Date(config.pauseUntil) > new Date()
 
 const STATE_PATH = join(HOME, 'state.json')
 const EMPTY = {

@@ -9,6 +9,7 @@ const act = a => fetch('/action', { method: 'POST', headers: { 'content-type': '
 let S = null            // 最新快照
 let view = new URLSearchParams(location.search).get('view')   // null | 'cards' | 'insight' | 'book' | 'today' | {doc}（?view= 用于调试截图）
 let lastNod = -1
+let lastWatch = ''
 let bubble = { text: '', until: 0, tone: '' }
 let editing = null      // {id, mode:'revise'|'supply'}
 let quitArmed = false
@@ -58,6 +59,8 @@ function connect() {
   es.onmessage = e => {
     const prev = S
     S = JSON.parse(e.data)
+    const w = JSON.stringify(S.watch)
+    if (w !== lastWatch) { lastWatch = w; post({ watch: S.watch }) }
     if (S.nod !== lastNod) { if (lastNod >= 0 && S.nodText) { nod(); say(S.nodText, 4000, 'quiet') } lastNod = S.nod }
     if (prev && S.cards.length > prev.cards.length && !view) say(S.cards[0].title, 0, 'call')
     if (!editing) render()
@@ -85,7 +88,7 @@ function render() {
   bubbleEl.onclick = !S.screenAccess ? () => act({ type: 'open-privacy' }) : () => { view = S.cards.length ? 'cards' : view; render() }
 
   const canIgnore = S.wechat && S.currentConv && !S.ignoreConvs.includes(S.currentConv)
-  const status = !S.eyes ? '闭眼中' : S.privateApp ? '私密应用在前台' : S.wechat ? (S.currentConv ? `在看：${short(S.currentConv)}` : '在看微信') : '微信不在前台'
+  const status = statusText()
   menu.replaceChildren(...[
     h('small', {}, status),
     h('button', { onclick: () => { const on = !S.eyes; post({ eyes: on }); act({ type: 'eyes', on }); say(on ? '我睁眼啦，只看微信。' : '好，我闭眼，什么都不看。', 2500, 'quiet') } }, S.eyes ? '闭眼（暂停看）' : '睁眼'),
@@ -94,6 +97,7 @@ function render() {
     h('button', { onclick: () => open('today') }, '在帮你盯的事'),
     h('button', { onclick: () => open('insight') }, '它看到了什么'),
     h('button', { onclick: () => open('book') }, '我的工作方式'),
+    h('button', { onclick: () => open('settings') }, '设置'),
     h('div', { class: 'sep' }),
     h('button', { class: quitArmed ? 'danger' : 'quit', onclick: () => {
       if (!quitArmed) { quitArmed = true; render(); setTimeout(() => { quitArmed = false; render() }, 3000); return }
@@ -106,11 +110,18 @@ function render() {
   sizeTo()
 }
 const open = v => { view = view === v ? null : v; render() }
+function statusText() {
+  if (!S.eyes) return '闭眼中'
+  if (S.paused) return '暂停中'
+  if (S.wechat) return S.currentConv ? `在看：${S.watchingApp} · ${short(S.currentConv)}` : `在看：${S.watchingApp}`
+  const on = S.apps.filter(a => a.state === 'on').map(a => a.name)
+  return on.length ? `没在看（${on.join('、')}不在前台）` : '还没允许看任何应用'
+}
 const short = s => s.length > 8 ? s.slice(0, 8) + '…' : s
 
 function head() {
-  const title = typeof view === 'object' ? view.doc.split('/').pop() : { cards: '找你的事', insight: '它看到了什么', book: '我的工作方式', today: '在帮你盯的事' }[view]
-  const status = !S.eyes ? '闭眼中' : S.privateApp ? '私密应用在前台，没在看' : S.wechat ? '在看微信' : '没在看（微信不在前台）'
+  const title = typeof view === 'object' ? view.doc.split('/').pop() : { cards: '找你的事', insight: '它看到了什么', book: '我的工作方式', today: '在帮你盯的事', settings: '设置' }[view]
+  const status = statusText()
   return h('div', { class: 'head' },
     typeof view === 'object' ? h('button', { class: 'back', onclick: () => { view = 'cards'; render() } }, '‹') : null,
     h('b', {}, title), h('span', { class: 'status' }, status),
@@ -122,11 +133,23 @@ function body() {
   if (view === 'insight') return insightView()
   if (view === 'book') return bookView()
   if (view === 'today') return todayView()
+  if (view === 'settings') return settingsView()
   return S.cards.length ? h('div', { class: 'cards' }, S.cards.map(cardView)) : h('div', { class: 'empty' }, '现在没有要找你的事。我在看着微信，你答应别人的事、交给我的事，我都会盯着。')
 }
 
 /* ── 卡片 ── */
 function cardView(c) {
+  if (c.kind === 'consent') return h('div', { class: 'card card-consent' },
+    h('div', { class: 'card-top' }, h('span', { class: 'kind' }, '第一次见到'), h('span', {}, c.at)),
+    h('div', { class: 'title' }, c.title),
+    h('ul', { class: 'consent' },
+      h('li', {}, '只在它在前台时截图，并且只识别聊天文字；识别在你电脑上完成'),
+      h('li', {}, '你答应别人的事我会记下、提前起草，发送永远由你来按'),
+      h('li', {}, '随时可以在「设置」里关掉，或对某个会话说「不看」')),
+    h('div', { class: 'actions' },
+      h('button', { class: 'btn primary', onclick: () => { act({ type: 'app-consent', app: c.app, choice: 'on' }); say(`好，我开始看${c.app}了。`, 2500, 'quiet') } }, '看'),
+      h('button', { class: 'btn', onclick: () => act({ type: 'app-consent', app: c.app, choice: 'off' }) }, '不看'),
+      h('button', { class: 'btn', onclick: () => act({ type: 'app-consent', app: c.app, choice: 'later' }) }, '先不说')))
   if (c.kind === 'learn') return h('div', { class: 'card card-learn' },
     h('div', { class: 'card-top' }, h('span', { class: 'kind' }, '想记住一条'), h('span', {}, c.at)),
     h('div', { class: 'title' }, c.title),
@@ -232,7 +255,6 @@ function bookView() {
     editing?.rule === 'new' ? ruleEditor(null) : h('button', { class: 'btn add', onclick: () => { editing = { rule: 'new' }; render() } }, '＋ 加一条规则'),
     on.length ? h('ol', { class: 'rules' }, on.map(ruleRow)) : editing?.rule === 'new' ? null : h('div', { class: 'empty' }, '还没有规则。你可以直接写一条，比如「给客户的消息都带上称呼」。'),
     off.length ? h('details', { class: 'off-rules' }, h('summary', {}, `已停用 ${off.length} 条`), h('ol', { class: 'rules' }, off.map(ruleRow))) : null,
-    S.ignoreConvs.length ? h('div', { class: 'ignored' }, h('b', {}, '不看的会话'), S.ignoreConvs.map(cv => h('span', { class: 'chip' }, cv, ' ', h('button', { class: 'link', onclick: () => act({ type: 'unignore-conv', conv: cv }) }, '恢复')))) : null,
     h('p', { class: 'path' }, `规则以这里为准，会同步写进 ${S.home}/workspace/AGENTS.md；直接改那个文件会被覆盖。`))
 }
 
@@ -287,6 +309,49 @@ function taskEditor() {
   return h('div', { class: 'revise' }, text, h('div', { class: 'actions' },
     h('button', { class: 'btn primary', onclick: save }, '交给你'),
     h('button', { class: 'btn', onclick: () => { editing = null; render() } }, '取消')))
+}
+
+/* 设置：能看什么 / 怎么看 / 什么时候开口 / 起草能用什么 / 数据 */
+function settingsView() {
+  const st = S.settings
+  const set = patch => act({ type: 'settings', patch })
+  const row = (label, hint, control) => h('div', { class: 'set-row' }, h('div', {}, h('b', {}, label), hint ? h('small', {}, hint) : null), control)
+  const appRow = a => row(a.name, a.state === 'on' ? '在看：只看聊天文字，在你电脑上识别' : a.state === 'off' ? '你说过不看，不会再问' : '还没问过你，下次打开时会问',
+    h('div', { class: 'seg' }, [['on', '看'], ['off', '不看']].map(([v, l]) => h('button', { class: a.state === v ? 'is-on' : '', onclick: () => act({ type: 'app-set', app: a.name, value: v }) }, l))))
+  const pauseText = S.paused ? `已暂停到 ${new Date(S.pauseUntil).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : '没暂停'
+  const matInput = h('input', { class: 'scope', placeholder: '加一个文件夹，比如 ~/Projects', onfocus: () => { editing = { settings: true } }, onblur: () => { editing = null } })
+  const addMat = () => { const v = matInput.value.trim(); if (!v) return; editing = null; set({ materials: [...st.materials, v] }) }
+  matInput.addEventListener('keydown', e => { if (e.key === 'Enter') addMat() })
+  let clearArmed = false
+  const clearBtn = h('button', { class: 'btn', onclick: e => {
+    if (!clearArmed) { clearArmed = true; e.target.textContent = '再点一次确认清空'; e.target.classList.add('danger'); return }
+    act({ type: 'clear-transcripts' }); say('存下的聊天记录都清掉了。', 2500, 'quiet')
+  } }, '清空聊天记录')
+  return h('div', { class: 'scroll settings' },
+    h('h4', {}, '能看什么'),
+    h('p', { class: 'intro' }, '拾遗只看你同意过的应用。目前适配了的应用才会问你；没适配的（分不清谁说的）不会去看。'),
+    S.apps.map(appRow),
+    S.ignoreConvs.length ? row('不看的会话', '在已允许的应用里也跳过', h('div', { class: 'chips' }, S.ignoreConvs.map(cv => h('span', { class: 'chip' }, cv, ' ', h('button', { class: 'link', onclick: () => act({ type: 'unignore-conv', conv: cv }) }, '恢复'))))) : null,
+
+    h('h4', {}, '怎么看'),
+    row('截图间隔', '越短发现得越快，但更耗电。识别都在本机，不花 token；画面没变会跳过',
+      h('select', { onchange: e => set({ captureIntervalSec: Number(e.target.value) }) }, [1, 2, 2.5, 3, 5, 10].map(v => h('option', { value: v, selected: v === st.captureIntervalSec || null }, `${v} 秒`)))),
+    row('暂停', pauseText, h('div', { class: 'seg' },
+      S.paused ? h('button', { onclick: () => act({ type: 'pause', off: true }) }, '取消暂停')
+        : [h('button', { onclick: () => act({ type: 'pause', minutes: 60 }) }, '1 小时'), h('button', { onclick: () => act({ type: 'pause', until: 'morning' }) }, '到明早')])),
+
+    h('h4', {}, '什么时候开口'),
+    row('早上开口时间', '截止在之后的事，当天这个时间才找你', h('input', { type: 'time', value: st.morningAt, onchange: e => set({ morningAt: e.target.value }) })),
+    row('下班收尾时间', '每天这个时间列出今天在盯的事', h('input', { type: 'time', value: st.wrapUpAt, onchange: e => set({ wrapUpAt: e.target.value }) })),
+    row('每小时最多主动开口', '你主动点开的不算', h('select', { onchange: e => set({ speakBudgetPerHour: Number(e.target.value) }) }, [2, 4, 6, 10, 20].map(v => h('option', { value: v, selected: v === st.speakBudgetPerHour || null }, `${v} 次`)))),
+
+    h('h4', {}, '起草时能用什么'),
+    row('材料文件夹', '要交文档时，拾遗只读地在这些地方找材料', null),
+    h('div', { class: 'mats' }, st.materials.map(m => h('span', { class: 'chip' }, m, ' ', h('button', { class: 'link', onclick: () => set({ materials: st.materials.filter(x => x !== m) }) }, '移除'))),
+      h('span', { class: 'mat-add' }, matInput, h('button', { class: 'btn', onclick: addMat }, '加上'))),
+
+    h('h4', {}, '数据'),
+    row('聊天记录', `只存在你电脑上：${S.home}`, h('div', { class: 'seg' }, h('button', { onclick: () => act({ type: 'open-data' }) }, '打开文件夹'), clearBtn)))
 }
 
 function docView(path) {

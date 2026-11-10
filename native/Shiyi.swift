@@ -1,7 +1,8 @@
 // 拾遗.app：浮在所有窗口上方的桌宠 + 「眼睛」（只看微信窗口，本机 OCR）。
 // 业务逻辑全部在本机 daemon（node daemon/main.mjs）里；这里只负责：
 //   1) 透明置顶小窗，加载 http://127.0.0.1:7801/pet/
-//   2) 每 2.5 秒：前台是微信且眼睛睁着 → 截微信窗口 → Vision OCR → POST /observe
+//   2) 按设置的间隔：前台应用在白名单里、没暂停 → 截该窗口 → Vision OCR → POST /observe
+//      白名单/间隔/暂停由桌宠页面从 daemon 读来再告诉这里；收到之前什么都不截（默认不看）
 //   3) 前台应用变化 → POST /focus（daemon 判断私密名单、更新桌宠状态）
 // 构建：scripts/build-native.sh
 
@@ -10,7 +11,6 @@ import WebKit
 import Vision
 
 let DAEMON = URL(string: "http://127.0.0.1:7801")!
-let WECHAT_IDS: Set<String> = ["com.tencent.xinWeChat", "com.tencent.WeChat"]
 
 final class PetPanel: NSPanel {
     override var canBecomeKey: Bool { true }
@@ -22,6 +22,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     var timer: Timer?
     var lastHash: UInt64 = 0
     var eyesOn = true
+    var watchBundles: Set<String> = []   // 白名单（来自设置）
+    var interval: Double = 2.5
     var busy = false
     var size = NSSize(width: 300, height: 210)
     var hitRects: [NSRect] = []          // 网页里可点的区域（左上角原点）；其余透明处点击穿透
@@ -52,9 +54,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(appChanged(_:)),
             name: NSWorkspace.didActivateApplicationNotification, object: nil)
         if !CGPreflightScreenCaptureAccess() { CGRequestScreenCaptureAccess() }
-        timer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in self?.tick() }
+        restartTimer()
         hover = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in self?.updatePassThrough() }
         reportFocus(NSWorkspace.shared.frontmostApplication)
+    }
+
+    func restartTimer() {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in self?.tick() }
     }
 
     func loadPet() { web.load(URLRequest(url: DAEMON.appendingPathComponent("pet/"))) }
@@ -105,6 +112,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             size = NSSize(width: w, height: h); place()
         }
         if let e = body["eyes"] as? Bool { eyesOn = e; lastHash = 0 }
+        if let w = body["watch"] as? [String: Any] {
+            watchBundles = Set(w["bundles"] as? [String] ?? [])
+            eyesOn = !(w["paused"] as? Bool ?? false)
+            let iv = min(10, max(1, w["interval"] as? Double ?? 2.5))
+            if iv != interval { interval = iv; restartTimer() }
+            lastHash = 0
+        }
         if body["focus"] as? Bool == true { NSApp.activate(ignoringOtherApps: true); panel.makeKey() }
         if body["quit"] as? Bool == true { NSApp.terminate(nil) }
     }
@@ -122,7 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     // ── 眼睛 ──
     func tick() {
         guard eyesOn, !busy, let app = NSWorkspace.shared.frontmostApplication,
-              let bid = app.bundleIdentifier, WECHAT_IDS.contains(bid) else { return }
+              let bid = app.bundleIdentifier, watchBundles.contains(bid) else { return }
         guard CGPreflightScreenCaptureAccess() else { return }
         guard let (wid, bounds) = mainWindow(pid: app.processIdentifier) else { return }
         guard let img = CGWindowListCreateImage(.null, .optionIncludingWindow, wid, [.boundsIgnoreFraming, .bestResolution]) else { return }
@@ -134,7 +148,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             let lines = self.ocr(img)
             self.busy = false
             self.post("observe", [
-                "app": "微信", "bundle": bid,
+                "app": app.localizedName ?? bid, "bundle": bid,
                 "window": ["w": bounds.width, "h": bounds.height],
                 "image": ["w": img.width, "h": img.height],
                 "lines": lines,

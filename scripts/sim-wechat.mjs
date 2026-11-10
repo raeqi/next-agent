@@ -23,6 +23,6 @@ for (const m of msgs) {
 add('输入框里还没发的字', L + 20, H - 110, 200)          // 输入框（应被忽略）
 await fetch(`http://127.0.0.1:${port}/observe`, {
   method: 'POST', headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ app: '微信', window: { w: W, h: H }, image: { w: W * 2, h: H * 2 }, lines }),
+  body: JSON.stringify({ app: '微信', bundle: 'com.tencent.xinWeChat', window: { w: W, h: H }, image: { w: W * 2, h: H * 2 }, lines }),
 })
 console.log(`→ 已发送 ${conv}：${msgs.length} 条`)

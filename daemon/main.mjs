@@ -2,11 +2,11 @@
 // 拾遗 daemon：感知 → 筛选 → 记下 → 起草 → 在对的时候开口 → 从驳回里学习。
 //   node daemon/main.mjs [--port 7801] [--no-pet]
 import { createServer } from 'node:http'
-import { readFileSync, existsSync, statSync, rmSync } from 'node:fs'
+import { readFileSync, existsSync, statSync, rmSync, readdirSync } from 'node:fs'
 import { join, dirname, extname, normalize, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFile, spawn } from 'node:child_process'
-import { state, live, config, saveConfig, WS, HOME, subscribe, changed, save, insight, card, dropCard, maySpeak, spoke, hm, ymd, uid } from './store.mjs'
+import { state, live, config, saveConfig, SUPPORTED_APPS, appName, watching, paused, rawMaterials, WS, HOME, subscribe, changed, save, insight, card, dropCard, maySpeak, spoke, hm, ymd, uid } from './store.mjs'
 import { parseWeChat, diff, keyOf } from './wechat.mjs'
 import { appendTranscript, judgeCommitment, judgeRule, parseTask, draft, redraft, supply, writeHandbook, shutdownAgents, safe } from './agent.mjs'
 
@@ -35,7 +35,8 @@ let lastObs = null   // 调试：最近一次 OCR 原始结果（只在内存里
 async function onObserve(obs) {
   live.lastObserveAt = Date.now()
   lastObs = obs
-  if (!live.eyes || observing) return
+  // 白名单是最后一道关：原生端本来也只截白名单里的应用
+  if (!live.eyes || paused() || config.apps[obs.bundle] !== 'on' || observing) return
   observing = true
   try {
     const p = parseWeChat(obs, config.wechatListWidth)
@@ -198,6 +199,22 @@ function wrapCard() {
   })
 }
 
+/* ═════════════ 白名单：第一次打开支持的应用时问一次 ═════════════ */
+
+const askedLater = new Set()   // 本次运行里你点了「先不说」的应用
+const bundlesOf = name => Object.keys(SUPPORTED_APPS).filter(b => SUPPORTED_APPS[b].name === name)
+function setApp(name, value) {
+  const apps = { ...config.apps }
+  for (const b of bundlesOf(name)) { if (value) apps[b] = value; else delete apps[b] }
+  saveConfig({ apps })
+}
+function maybeAskConsent(bundle) {
+  const app = SUPPORTED_APPS[bundle]
+  if (!app || config.apps[bundle] || askedLater.has(app.name) || state.cards.some(c => c.id === 'consent:' + app.name)) return
+  card({ id: 'consent:' + app.name, kind: 'consent', app: app.name, title: `要我看「${app.name}」吗？` })
+  insight({ src: '桌宠', text: `第一次看到你打开${app.name}，问你要不要看`, verdict: 'speak' })
+}
+
 /* ═════════════ 你的操作 ═════════════ */
 
 // SHIYI_DRY=1：测试时不真的改剪贴板、不打开微信和访达
@@ -322,6 +339,43 @@ async function onAction(a) {
       saveConfig({ ignoreConvs: config.ignoreConvs.filter(x => x !== a.conv) })
       insight({ src: '你', text: `恢复看「${a.conv}」`, verdict: 'remember' })
       break
+    case 'app-consent': {
+      dropCard('consent:' + a.app)
+      if (a.choice === 'later') { askedLater.add(a.app); break }
+      setApp(a.app, a.choice === 'on' ? 'on' : 'off')
+      insight({ src: '你', text: a.choice === 'on' ? `同意拾遗看${a.app}` : `不让拾遗看${a.app}，以后不再问`, verdict: a.choice === 'on' ? 'remember' : 'private' })
+      break
+    }
+    case 'app-set':
+      setApp(a.app, a.value || null)
+      insight({ src: '设置', text: a.value === 'on' ? `开始看${a.app}` : a.value === 'off' ? `不再看${a.app}` : `${a.app}：下次打开时再问你`, verdict: a.value === 'on' ? 'remember' : 'private' })
+      break
+    case 'settings': {
+      const p = a.patch ?? {}, patch = {}
+      if (p.captureIntervalSec != null) patch.captureIntervalSec = Math.min(10, Math.max(1, Number(p.captureIntervalSec) || 2.5))
+      for (const k of ['morningAt', 'wrapUpAt']) if (/^\d{2}:\d{2}$/.test(p[k] ?? '')) patch[k] = p[k]
+      if (p.speakBudgetPerHour != null) patch.speakBudgetPerHour = Math.min(30, Math.max(1, Math.round(Number(p.speakBudgetPerHour) || 6)))
+      if (Array.isArray(p.materials)) patch.materials = p.materials.map(x => String(x).trim()).filter(Boolean)
+      saveConfig(patch)
+      insight({ src: '设置', text: `改了：${Object.keys(patch).map(k => ({ captureIntervalSec: '截图间隔', morningAt: '早上开口时间', wrapUpAt: '下班收尾时间', speakBudgetPerHour: '每小时最多开口', materials: '材料文件夹' })[k]).join('、')}`, verdict: 'remember' })
+      break
+    }
+    case 'pause': {
+      let until = ''
+      if (a.minutes) until = new Date(Date.now() + a.minutes * 60_000).toISOString()
+      if (a.until === 'morning') { const [h, m] = config.morningAt.split(':').map(Number); const d = new Date(); d.setDate(d.getDate() + (d.getHours() * 60 + d.getMinutes() >= h * 60 + m ? 1 : 0)); d.setHours(h, m, 0, 0); until = d.toISOString() }
+      saveConfig({ pauseUntil: until })
+      insight({ src: '你', text: until ? `暂停到 ${new Date(until).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : '取消暂停', verdict: until ? 'private' : 'remember' })
+      break
+    }
+    case 'clear-transcripts': {
+      const dir = join(WS, 'chat')
+      for (const f of readdirSync(dir)) rmSync(join(dir, f), { force: true })
+      state.seen = {}; for (const k of Object.keys(recent)) delete recent[k]
+      insight({ src: '设置', text: '清空了拾遗存下的所有聊天记录', verdict: 'private' })
+      break
+    }
+    case 'open-data': await sh('open', [HOME]); break
     case 'wrapup': wrapCard(); break
     case 'open-privacy': await sh('open', ['x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture']); break
     case 'quit': shutdown(); return
@@ -332,11 +386,17 @@ async function onAction(a) {
 /* ═════════════ 对桌宠的快照 ═════════════ */
 
 function snapshot() {
-  const wechat = /xinWeChat|WeChat/.test(live.focus.bundle)
-  const privateApp = config.privateApps.includes(live.focus.bundle)
-  const mode = !live.eyes || privateApp ? 'closed' : live.working ? 'work' : live.thinking ? 'think' : state.cards.length ? 'call' : wechat ? 'watch' : 'idle'
+  const on = watching()
+  const isPaused = paused()
+  const watchingNow = on.includes(live.focus.bundle)
+  const mode = !live.eyes || isPaused ? 'closed' : live.working ? 'work' : live.thinking ? 'think' : state.cards.length ? 'call' : watchingNow ? 'watch' : 'idle'
+  const names = [...new Set(Object.values(SUPPORTED_APPS).map(a => a.name))]
   return {
-    mode, eyes: live.eyes, privateApp, wechat, focus: live.focus, screenAccess: live.screenAccess,
+    mode, eyes: live.eyes, paused: isPaused, pauseUntil: config.pauseUntil, wechat: watchingNow, watchingApp: watchingNow ? appName(live.focus.bundle) : '',
+    focus: live.focus, screenAccess: live.screenAccess,
+    watch: { bundles: on, interval: config.captureIntervalSec, paused: isPaused || !live.eyes },
+    apps: names.map(n => { const v = bundlesOf(n).map(b => config.apps[b]); return { name: n, state: v.includes('on') ? 'on' : v.includes('off') ? 'off' : 'unasked' } }),
+    settings: { captureIntervalSec: config.captureIntervalSec, morningAt: config.morningAt, wrapUpAt: config.wrapUpAt, speakBudgetPerHour: config.speakBudgetPerHour, materials: rawMaterials() },
     seeing: Date.now() - live.lastObserveAt < 10_000, currentConv: live.currentConv, ignoreConvs: config.ignoreConvs,
     working: live.working, thinking: live.thinking, lastTool: live.lastTool ?? '', nod: live.nod, nodText: live.nodText,
     cards: state.cards, rules: state.rules, insight: state.insight.slice(-120), seenCount: state.seenCount,
@@ -355,7 +415,11 @@ const server = createServer(async (req, res) => {
   const p = decodeURIComponent(url.pathname)
   try {
     if (req.method === 'POST' && p === '/observe') { onObserve(await body(req)); return res.end('ok') }
-    if (req.method === 'POST' && p === '/focus') { const b = await body(req); live.focus = { bundle: b.bundle, name: b.name }; live.screenAccess = b.screenAccess !== false; changed(); return res.end('ok') }
+    if (req.method === 'POST' && p === '/focus') {
+      const b = await body(req); live.focus = { bundle: b.bundle, name: b.name }; live.screenAccess = b.screenAccess !== false
+      if (live.eyes && !paused()) maybeAskConsent(b.bundle)
+      changed(); return res.end('ok')
+    }
     if (req.method === 'POST' && p === '/action') { await onAction(await body(req)); return res.end('ok') }
     if (p === '/events') {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' })
