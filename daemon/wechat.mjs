@@ -17,15 +17,19 @@ export function parseWeChat(obs, listWidthCfg = 0) {
   const panel = lines.filter(l => l.X >= L - 4)
   const P = W - L
 
-  // 顶部会话名：聊天区最上方、离顶 70pt 以内的文字
-  const header = panel.filter(l => l.Y < 70).sort((a, b) => a.Y - b.Y || a.X - b.X)
-  const conv = (header[0]?.text ?? '').replace(/^[<‹]\s*/, '').replace(/\(\d+\)$/, '').replace(/[…\.]+$/, '').trim()
+  // 顶部会话名：聊天区顶部 60pt 内、靠左的那行字（右上角的图标会被 OCR 成「-6…」之类的碎片，要排除）
+  const isTitle = l => l.Y < 60 && l.X < L + P * 0.6 && /[\p{L}\p{N}]{2,}/u.test(l.text.replace(/[（(]\d+[)）]/g, ''))
+  const header = panel.filter(isTitle).sort((a, b) => a.X - b.X || a.Y - b.Y)
+  const rawTitle = header[0]?.text ?? ''
+  const group = /[（(]\d+[)）]\s*$/.test(rawTitle)
+  const conv = rawTitle.replace(/^[<‹]\s*/, '').replace(/\s*[（(]\d+[)）]\s*$/, '').replace(/[…\.]+$/, '').trim()
 
   // 输入框：底部 ~150pt；这里的文字是「还没发出去的」
   const inputTop = H - 150
   const typing = panel.filter(l => l.Y >= inputTop).map(l => l.text).join('')
 
-  const body = panel.filter(l => l.Y >= 70 && l.B < inputTop).sort((a, b) => a.Y - b.Y)
+  const headerBottom = header[0] ? header[0].B + 10 : 60
+  const body = panel.filter(l => l.Y >= headerBottom && l !== header[0] && l.B < inputTop).sort((a, b) => a.Y - b.Y)
   const items = []
   for (const l of body) {
     const center = (l.X + l.R) / 2
@@ -36,11 +40,13 @@ export function parseWeChat(obs, listWidthCfg = 0) {
     else side = 'meta'
     const prev = items[items.length - 1]
     // 同一侧、垂直间距小 → 同一个气泡的下一行
-    if (prev && prev.side === side && side !== 'meta' && l.Y - prev.B < Math.max(prev.lh, l.lh) * 0.9 && Math.abs(l.X - prev.X) < 30) {
-      prev.text += l.text; prev.B = l.B
-    } else items.push({ side, text: l.text, X: l.X, B: l.B, lh: l.lh })
+    if (prev && prev.side === side && side !== 'meta' && l.Y - prev.B < Math.max(prev.lh, l.lh) * 1.2 && Math.abs(l.X - prev.X) < 40) {
+      // 群聊里对方气泡上方那行小字是名字（字号比消息小）：拼成「名字：内容」
+      const nameAbove = group && side === 'other' && prev.lines === 1 && prev.text.length <= 20 && prev.lh < l.lh * 0.92
+      prev.text += (nameAbove ? '：' : '') + l.text; prev.B = l.B; prev.lines++
+    } else items.push({ side, text: l.text, X: l.X, B: l.B, lh: l.lh, lines: 1 })
   }
-  return { conv, typing, messages: items.map(({ side, text }) => ({ side, text })), divider: L }
+  return { conv, group, typing, messages: items.map(({ side, text }) => ({ side, text })), divider: L }
 }
 
 /**

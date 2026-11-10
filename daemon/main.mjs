@@ -31,8 +31,10 @@ function loadRecent(conv) {
 }
 let observing = false
 
+let lastObs = null   // 调试：最近一次 OCR 原始结果（只在内存里，GET /debug/last 查看）
 async function onObserve(obs) {
   live.lastObserveAt = Date.now()
+  lastObs = obs
   if (!live.eyes || observing) return
   observing = true
   try {
@@ -323,6 +325,11 @@ const server = createServer(async (req, res) => {
       const ka = setInterval(() => res.write(': ka\n\n'), 15000)
       req.on('close', () => { off(); clearInterval(ka) })
       return
+    }
+    if (p === '/debug/last') {
+      if (!lastObs) return res.end('{}')
+      const parsed = parseWeChat(lastObs, config.wechatListWidth)
+      return res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' }).end(JSON.stringify({ window: lastObs.window, parsed, lines: lastObs.lines.map(l => ({ t: l.text, x: +(l.x * lastObs.window.w).toFixed(0), y: +(l.y * lastObs.window.h).toFixed(0), w: +(l.w * lastObs.window.w).toFixed(0), h: +(l.h * lastObs.window.h).toFixed(0), c: +l.conf.toFixed(2) })) }, null, 1))
     }
     if (p === '/file') {
       const f = readable(url.searchParams.get('path') ?? '')
