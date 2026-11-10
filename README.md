@@ -10,7 +10,7 @@
 - 一份由你决定的应用白名单，控制哪些应用可以观察；
 - 一个后台执行入口，读取资料、分析内容、使用工具并交付结果。
 
-产品方向见 **[产品说明](docs/proactive-agent/PRD.md)**；实现与验证边界见 [架构说明](docs/proactive-agent/ARCHITECTURE.md)。
+产品方向见 **[产品说明](docs/proactive-agent/PRD.md)**；实现与验证边界见 [架构说明](docs/proactive-agent/ARCHITECTURE.md)。关于模型能力、常驻 Agent、人机协作与产品机会的背景判断，见 [趋势研究](docs/research-trends.md)。
 
 ---
 
