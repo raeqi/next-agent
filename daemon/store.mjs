@@ -69,7 +69,7 @@ export function findApp(bundle, name = '') {
 }
 // 兼容旧调用：bundle → {name, family}
 export const SUPPORTED_APPS = Object.fromEntries(APP_LIST.flatMap(a => a.bundles.map(b => [b, a])))
-export const appName = b => findApp(b)?.name ?? b
+export const appName = b => config.appNames?.[b] ?? findApp(b)?.name ?? b
 /** 白名单里状态为「看」的 bundle id（含你实际打开时记下的 bundle）。 */
 export const watching = () => Object.keys(config.apps).filter(b => config.apps[b] === 'on')
 export const paused = () => !!config.pauseUntil && new Date(config.pauseUntil) > new Date()

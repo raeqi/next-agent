@@ -1,263 +1,45 @@
-# 拾遗：框架设计
+# 拾遗：通用桌面架构
 
-> 版本 v0.1 · 2026-11-07 · 配套：[产品高阶文档](./PRD.md)
-> 模型：DeepSeek（经 DeepSeek Harness 调用），后续可以换成任意模型。
+版本 v0.2 · 2026-11-11。产品范围见 PRD.md；历史设计见 archive/ARCHITECTURE-v0.1.md。
 
----
+## 运行结构
 
-## 1. 设计目标
+native/Shiyi.swift 的 NSPanel + WKWebView 承载 pet/ 界面。原生端报告前台应用，按白名单截取窗口并进行本机 Vision OCR，POST /focus、/observe 给 daemon/main.mjs。界面订阅 /events SSE，向 /action 提交用户操作。
 
-1. **核心链路真跑**：承诺识别、跨素材起草、一致性校验、驳回学习、定时唤醒，全部由真实模型和真实 agent 完成。
-2. **演示永不翻车**：真跑的结果可以录下来，在离线静态页里原样回放。
-3. **不改 Harness 源码**：只把 Harness 当作 agent 运行时来用，产品逻辑都放在自己的代码里。
-4. **分层清楚**：每一层对应 PRD 里的一条产品原则，评审可以按层追问。
+后台默认开发端口18746。scripts/start-desktop.sh 编译后把运行副本放到本地临时目录，避免同步文件夹的扩展属性破坏签名；SHIYI_NATIVE_APP、SHIYI_NATIVE_BINARY、SHIYI_URL 指定运行副本与连接。数据默认 ~/.shiyi，SHIYI_HOME 可隔离。当前会话运行目录 /tmp/shiyi-desktop-live 为测试环境，不是正式安装方案。
 
----
+## 感知与建议
 
-## 2. 总体结构
+store.mjs 持久化 config.apps（on/off）、discoveredApps、appNames；仅实际发现应用进入设置。perceive.mjs 分类 chat/doc/other；layout.mjs 对聊天提供增强解析，不限制其他应用感知。文档路径读取辅助函数已存在，但未接通通用观察主流程。
 
-```
-┌────────────────────────── 浏览器：假桌面 (web) ──────────────────────────┐
-│  窗口：聊天 · 文档 · 邮件 · 日历 · 表格 · 私人窗口                       │
-│  桌宠（气泡 / 早安简报 / 下班收尾） · 修订叠加层 · 拍板卡 · 语音          │
-│  《我的工作方式》手册页 · 时间线控制条（演示推进）                        │
-│        │ ① 桌面事件（已过隐私过滤）            ▲ ⑥ 建议 / 草稿 / 状态      │
-└────────┼────────────────────────────────────────┼──────────────────────────┘
-         ▼                                        │      HTTP + SSE
-┌──────────────────────── Bridge（Node，本机） ───────────────────────────────┐
-│  感知层：事件归一化、去重、合并窗口期                                       │
-│  筛选层：规则预筛 → 轻量模型判定「忽略 / 记下 / 出手」                      │
-│  台账：承诺、建议、修订、手册规则、信任分（JSON 文件）                       │
-│  信任层：动作分级、梯度升降、审计日志                                       │
-│  执行代理：把「出手」翻译成 agent 任务；把 agent 产物翻译回建议              │
-│  录制器：把每次真跑的事件流落盘，供回放                                     │
-│        │ ② 任务 prompt                         ▲ ⑤ 会话事件 / 结果          │
-└────────┼────────────────────────────────────────┼──────────────────────────┘
-         ▼        dsh-sdk-client（stdio JSON-RPC） │
-┌──────────────────── DeepSeek Harness（dsh --profile sdk） ──────────────────┐
-│  agent loop · fs 工具 · schedule · agent-instructions · skill-office        │
-│  ③ 读素材、④ 在 shadow/ 下写草稿、写定时提醒                                │
-│                    工作区 = 「林夏的电脑」(workspace/)                      │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+main.mjs 将 OCR 按阅读顺序转换为文字，写 context/<bundle>.txt，比较指纹并限频调用 agent.judgeOpportunity。pages 保存内存快照。应用前台停留定时器独立于画面变化触发询问；只对允许应用运行，受冷却与打扰预算限制。
 
-**工作区就是共享状态。** 桌面上的素材（聊天记录、会议纪要、数据表、周报）以文件形式放在 `workspace/` 里。agent 用 Harness 自带的 fs 工具去读，草稿一律写进 `workspace/shadow/`，手册就是 `workspace/AGENTS.md`。这样第一版不需要给 Harness 写任何自定义工具或插件。
+聊天承诺仍有专项识别、起草、兑现检测逻辑；不应对通用页面作「与你要兑现的事无关」判断。通用建议使用 opportunity 卡片，准备结果调用 reviewContext，写当前 shadow 工作目录下 <id>/看法.md。
 
-```
-workspace/
-  AGENTS.md            《我的工作方式》手册（agent-instructions 会自动注入）
-  chat/                群聊、私聊记录（每个会话一份 jsonl）
-  docs/                原件：周报、会议纪要
-  data/                报表（csv）
-  mail/ calendar/      邮件和日程
-  shadow/              影子副本：只有 agent 能写，原件永远不被碰
-  ledger/              Bridge 维护的台账（agent 只读）
-```
+## 委派任务
 
----
+/action add-task 创建任务并调用 startTask → executeTask。Harness 主模型在工具循环中执行任务，事件回传更新进度。工作目录为 shadow/，任务只应写 <id>/，不是重复写 shadow/<id>/。
 
-## 3. 分层设计
+产物为计划.md、结果.md、任务状态.json。宿主检查状态枚举、交付文件存在与文件名范围、验证说明；这不等于独立证明模型所有论断正确。completed/blocked 结果以 task-result 卡呈现；异常为 failed，可补充后重试。重启将遗留 running 任务标为 blocked，将 working 建议标为 failed。
 
-### 3.1 感知层（对应原则：看与不看由你决定）
+委派执行器没有桌面操作工具集成，不应绕过 actions.mjs；现阶段需要桌面多步交互时返回阻塞。任务中的网络和文件边界部分依赖提示词及 Harness 沙箱，尚不是完整宿主级工具白名单。
 
-- 假桌面的每个窗口都会发出结构化事件，不传截图：
-  `{ app, window, kind: 'message.sent' | 'doc.edited' | 'calendar.changed' | 'focus' | 'external', text, refs, private }`
-- **隐私过滤放在浏览器端**：桌宠闭眼时，或当前窗口在私密名单上时，事件根本不会离开页面，只在本地记一条「这里我没看」。
-- Bridge 负责归一化：同一个窗口连续输入的内容按 3–5 秒合并成一个事件，避免每敲一个字就触发一次。
+## 原生操作与验证
 
-> 真产品里这一层由操作系统级的感知来做，比如 Harness 里实验性的 `cua-macos`。原型用假桌面代替，接口形态保持不变。
+actions.mjs 通过 Shiyi --inspect / --execute 读取 AX 控件或执行 setValue / press。config.operations 为 off/ask/auto，autoTargets 为允许自动填写的控件名称。
 
-### 3.2 筛选层（对应原则：不值得就闭嘴）
+宿主复查观察状态、暂停、权限、快照摘要、控件角色和允许操作。自动操作仅允许具名文本框，密码框禁止。危险按钮标题过滤仅为有限防线，不构成通用语义安全保证。执行后读取目标角色、标题、文本值验证；press 保留 unverified。state.audit 保存最近200次执行记录。
 
-这一层是**单位经济学**能否成立的关键：绝大多数事件不应该惊动主 agent。
+真实AX调用仍未通过系统权限检测。CLI子进程权限归属与应用签名/位置需进一步定位，不能把模拟桥测试作为真实桌面通过证据。
 
-| 级 | 做法 | 成本 | 例子 |
-|---|---|---|---|
-| L0 规则 | 关键词和模式匹配：承诺句式（「明天发你」「我来跟进」）、数字、重复动作计数 | 零 | 「明天上午发你」命中承诺句式 |
-| L1 轻量模型 | `deepseek-v4-flash`，不开推理，只输出结构化判定 | 极低 | 判定为 `remember`（记进承诺台账），并抽出对象、事项、截止时间 |
-| L2 主 agent | 只有判定为 `act` 时才派任务 | 高 | 起草竞品对比 |
+## 模型与生命周期
 
-L1 的输出格式：`{ verdict: 'ignore'|'remember'|'act', kind, why, deadline?, confidence }`。其中 `why` 会原样展示给用户，作为「我为什么找你」。
-开口需要过两道闸门：`confidence` 高于阈值，并且当前「打扰预算」还有余量（例如每小时最多主动开口 N 次；用户在专注时预算更紧）。
+bridge/harness.mjs 用 stdio JSON-RPC 启动本机 dsh。triage / draft 进程池各自串行排队。Flash负责判断/规划，Pro负责处理/交付。session/wait 超时180秒，超时关闭对应池；排队时间不包含在单次执行超时内。缺少可靠单任务取消和精确排队位置。
 
-### 3.3 台账（记忆）
+SSE重连成功清除过期断线气泡；前端静态资源需要重新加载才能更新。原生鼠标全局监听调用 window.shiyiDismiss，页面同时支持 Esc 与内部空白关闭。原生更新需重新签名，可能影响授权。
 
-Bridge 用 JSON 文件维护以下对象（`workspace/ledger/`）：
+## 验证
 
-```ts
-Commitment { id, to, what, dueAt, source: {app, ref, quote}, status: 'open'|'drafted'|'done'|'dropped', draftId? }
-Suggestion { id, kind: 'commitment'|'fix'|'chain'|'takeover'|'wrapup', why, evidence[], draftId?, createdAt, state: 'pending'|'accepted'|'rejected'|'ignored' }
-Revision   { id, targetFile, shadowFile, hunks: [{ before, after, reason, evidenceRef }] }
-Rule       { id, text, learnedFrom: suggestionId, createdAt, enabled }      // 同步渲染进 AGENTS.md
-TrustScore { actionClass, level: 'ask'|'do-then-tell', streak }
-Audit      { at, actor, action, target, decision }
-```
+node scripts/actions-test.mjs：隔离模拟桥8项检查，不接触实际应用。真实模型分别验证机会判断、单步规划、工具计算交叉验证和 reviewContext 文件读取。完整原生权限、实际填写、外部点击关闭、定时投递桌宠仍待验证。
 
-**手册的设计**：`Rule` 是唯一的数据源，Bridge 会把启用中的规则渲染成 `workspace/AGENTS.md` 里的一个区块。Harness 的 `agent-instructions` 会在新会话开始时自动注入这个文件，所以学到的规则下次就生效，不需要额外的提示词拼接，用户在手册页上看到的也正是 agent 读到的。
-
-### 3.4 执行层（Harness）
-
-- 启动方式：`DeepSeekHarness({ profile: 'sdk', provider: 'deepseek-official', model: <主模型> })`，工作目录指向 `workspace/`。
-- **每一类出手对应一个会话**，避免上下文互相污染：起草承诺交付物、数字校验、连锁处理、下班收尾。
-- 任务 prompt 只说明目标和约束，不写死流程：
-  「林夏在 {quote} 里答应 {to} 在 {dueAt} 前提供 {what}。请在工作区中找到相关素材，在 shadow/ 下起草交付物。每个论断都标注来源文件和行号。不要修改 shadow/ 以外的任何文件。」
-- 结果收集：通过 `subscribeSessionTree` 订阅会话事件；工具调用流转成桌宠的「它在做什么」，`shadow/` 下的新文件转成 `Revision` 和 `Suggestion`。
-- **定时唤醒**：承诺带截止时间时，让 agent 用 Harness 的 `schedule` 设置提醒，Host 到点会唤醒会话。演示时可以用时间线控制条直接快进触发。
-- **外部事件**（航班延误）：由时间线按钮发出 `external` 事件，经筛选层后派给连锁处理会话。之后如有需要，可以换成 Harness 实验性的 `webhook`。
-
-### 3.5 信任层（对应原则：原件永不被碰）
-
-| 动作级别 | 例子 | 默认策略 |
-|---|---|---|
-| R0 只读 | 读素材 | 直接做 |
-| R1 起草 | 在 shadow/ 下写草稿 | 直接做 |
-| R2 改原件 | 接受修订后写回 docs/ | 必须由你点击接受；可以撤回（Bridge 保留原件版本） |
-| R3 对外发送 | 发消息、发邮件 | 必须拍板；原型里只模拟发送 |
-| R4 涉及钱 | 改签、付款 | 必须拍板，并二次确认 |
-
-- **执行边界**：agent 只能写 `shadow/`，由 Harness sandbox 强制保证（会话工作目录 = shadow/，见 §5 M0 结论）；Bridge 的文件快照校验作为第二道防线，发现越界就回滚并记入审计。
-- **拍板全部在产品层完成**：SDK 目前不支持服务端向客户端发审批请求，所以 agent 不做任何 R2 及以上的动作，只产出草稿；拍板以后由 Bridge 执行（模拟）发送或写回。这恰好也是想要的产品语义。
-- **信任梯度**：同一个 `actionClass` 连续被接受 N 次，就提示「以后这类我先改了再告诉你？」，用户同意后升级为 `do-then-tell`；之后一旦被驳回，立即降级。
-
-### 3.6 呈现层（对应原则：先做好再开口、主动要可解释）
-
-| 组件 | 职责 |
-|---|---|
-| 桌宠 | 常驻在角落。状态有：睡着、看着、在干活（显示当前工具调用的一句话）、有事找你（气泡）、闭眼 |
-| 建议卡 | 「我为什么找你」+ 依据（可以点开跳到出处）+ 草稿预览 +「接受 / 改一下 / 不要」 |
-| 修订叠加层 | 在原件上叠加 shadow 的差异；可以逐条接受或驳回；驳回时可以附一句原因 |
-| 驳回 → 学习 | 驳回原因交给 L1 模型判断「这是不是一条可复用的规则」；如果是，就生成 `Rule` 草案，用户确认后写进手册 |
-| 语音拍板 | 用 Web Speech API 朗读建议，识别「发 / 不发 / 晚点」 |
-| 手册页 | 列出规则，可以编辑或停用，每条都标明是从哪次驳回学来的 |
-
-### 3.7 录制与回放
-
-- 录制器把真跑时的「桌面事件 → 筛选判定 → agent 事件流 → 产物」按时间戳写入 `recordings/<scene>.jsonl`。
-- 前端有两种数据源：`live`（连接 Bridge）和 `replay`（读取录制文件，按原节奏或加速播放）。UI 代码完全共用。
-- 发给评审的静态链接用 `replay`，界面角标注明「真实运行录制 · 2026-11-xx · deepseek-v4」。
-
----
-
-## 4. 关键链路时序
-
-### 4.1 承诺 → 交付（主线）
-
-```
-聊天窗口 "明天上午发你竞品对比"
- → 感知：message.sent
- → L0 命中承诺句式 → L1：remember {to: 老王, what: 竞品对比, due: 明早 10:00}
- → 写 Commitment(open)；桌宠轻点头（不开口）
- → [时间线快进到早上 08:30，或由 schedule 到点唤醒]
- → 派任务：起草会话（读 chat/ docs/会议纪要 data/）→ 写 shadow/竞品对比.md
- → Bridge 生成 Suggestion(commitment) + 依据
- → 09:00 早安气泡："你答应老王的竞品对比，我已经起草好了，要发吗？"
- → 用户驳回一句 "我觉得…" + 原因 → L1 抽出规则 → 用户确认 → AGENTS.md 更新
- → 用户点「发送」→ R3 拍板 → 模拟发送 → Commitment(done) → 审计
-```
-
-### 4.2 数字一致性校验
-
-```
-文档窗口 doc.edited 包含 "DAU 12 万"
- → L0：发现数字 + 指标名 → L1：act {kind: fix}
- → 派任务：在 data/ 中查找该指标的最新值，若不一致，在 shadow/ 写出修订
- → 修订叠加层亮起一条：12 万 → 10.8 万（来源：data/weekly.csv 第 14 行）
-```
-
-### 4.3 状态变化的连锁处理
-
-```
-external: 航班 MU5xxx 延误 2 小时
- → L1：act {kind: chain}
- → 派任务：读 calendar/ mail/，起草「会议推迟通知」和「接机改时间」两份草稿
- → 用户离开电脑 → 语音播报 → 用户说 "发" → R3 拍板 → 模拟发送
-```
-
----
-
-## 5. Harness 能力映射
-
-| 需求 | Harness 能力 | 状态 |
-|---|---|---|
-| 调用 DeepSeek 模型 | `llm-deepseek-api-key`，provider `deepseek-official`，模型 `deepseek-v4-pro` / `deepseek-v4-flash` | ✅ M0 已跑通 |
-| 外部程序驱动 agent | SDK 协议（stdio JSON-RPC，`dsh --profile sdk`）。桌面版自带 `dsh` 可执行文件但不带 TS 客户端，所以用 `bridge/harness.mjs` 自写了约 100 行的零依赖客户端 | ✅ M0 已跑通 |
-| 读写素材 | fs 工具（`dsh-base` 自带） | 现成 |
-| 手册注入 | `agent-instructions`：从 `.git` 标记的项目根一路加载到会话工作目录 | ✅ 已确认自动注入 |
-| 定时唤醒 | `schedule` + `tool-schedule` | ✅ sdk profile 默认启用（M2 验证实际唤醒） |
-| 导出 docx | `skill-office` | 现成，可选 |
-| 外部事件建会话 | 实验性 `webhook` | 可选 |
-| 写入范围约束 | sandbox `workspace-write`：唯一可写根就是会话工作目录 | ✅ 已确认强制生效，见下文 |
-| 筛选层、台账、信任层、录制回放 | — | **自建（Bridge）** |
-
-
-### M0 结论（2026-11-07）
-
-- **写入隔离由 sandbox 强制保证**：会话工作目录设为 `workspace/shadow/`，同时在 `workspace/` 执行 `git init` 作为项目根。这样 sandbox 只允许写 shadow/；写 `docs/` 会被拒绝（`sandbox: file access denied under workspace-write mode`）。sandbox 会提供「申请提权」的选项，但提权要走审批，而 SDK 没有应答方，所以按设计直接拒绝（fail closed）。Bridge 的文件快照校验保留作第二道防线。
-- **手册自动生效**：`agent-instructions` 以 `workspace/` 为项目根，把 AGENTS.md 作为 baseline 注入首轮请求。
-- **效果**：`deepseek-v4-pro` 约 55–70 秒产出一页竞品对比，出处标注 20 处以上且全部可核对；草稿还自发标出了周报里「DAU 12 万」与数据表 10.8 万不一致。场景 2 的素材因此天然成立。
-- 运行：`node bridge/m0.mjs [--model deepseek-v4-flash] [--probe]`；事件流录制在 `recordings/`。
-
----
-
-## 6. 技术选型
-
-- **前端**：原生 DOM + CSS，零依赖、零构建（或只用一个极简的拼接脚本）。打开 `index.html` 就能跑 replay 版，方便发布成静态链接。
-- **Bridge**：Node.js，零依赖（自写 SDK 客户端，调用桌面版自带的 `dsh`；可以用 `DSH_BIN` 指定其他路径）。对外提供 HTTP 接口和 SSE 推送。
-- **模型**：筛选用 `deepseek-v4-flash`（不开推理）；主 agent 用 DeepSeek 主力模型（具体型号以本机 Harness 可用列表为准）。
-- **存储**：全部是 workspace 下的普通文件，可读可 diff，演示前一键重置。
-
-```
-Next-Agent/
-  docs/proactive-agent/   本文档、PRD
-  desktop/                前端（假桌面 + 桌宠 + 各层 UI）
-  bridge/                 Bridge 服务
-  workspace-seed/         演示素材种子（每次演示前复制为 workspace/）
-  recordings/             真跑录制
-  scripts/                e2e、截图、录制
-```
-
----
-
-## 7. 里程碑
-
-| 阶段 | 产出 | 验收 |
-|---|---|---|
-| M0 跑通 Harness | Bridge 用 SDK 拉起 dsh，用 DS 模型在 workspace 里读文件、写 shadow | 一条 prompt 真跑出带出处的草稿 |
-| M1 静态骨架 ✅ | 假桌面、桌宠、建议卡、修订层、手册、它的视角、耳机模式，全部用剧本数据 | 7 幕动线可以手动点完；`scripts/desktop-e2e.mjs` 27 项断言通过 |
-| M2 主线真跑 | 承诺识别（L0+L1）→ 起草 → 修订 → 驳回学习 → 手册生效 | 第 6 步里新草稿自动遵守了新规则 |
-| M3 其余场景 | 数字校验、航班连锁、语音拍板、下班收尾、闭眼 | 5 分钟动线全部真跑一遍 |
-| M4 录制回放与打磨 | 录制、replay 模式、静态链接、截图、e2e | 断网也能完整演示 |
-
-### M2：从演示变成本地应用（2026-11-07）
-
-M1 是按剧本播放的演示。M2 把它做成在自己 Mac 上真跑的应用，感知只看微信：
-
-| 层 | 实现 |
-|---|---|
-| 感知 | `native/Shiyi.swift`：微信在前台时每 2.5 秒截一次微信窗口，画面没变就跳过，再用 Vision 在本机做 OCR（中英文），把文字发到 daemon `/observe`。需要「屏幕录制」权限。 |
-| 版式解析 | `daemon/wechat.mjs`：用会话列表右侧的时间列定位分界，顶部文字当会话名，按左右对齐判断谁说的，合并同一气泡的多行，按会话去重。第一次看到的会话只当作历史。 |
-| 筛选 | L0 本机规则（承诺句式）→ L1 `deepseek-v4-flash`（推理关闭，约 1–3 秒）确认，并抽出对象、事项和时间。 |
-| 起草 | L2 `deepseek-v4-pro`（Harness 会话，工作目录是 `~/.shiyi/workspace/shadow`）：读聊天记录和材料目录，写出 `消息.txt`、文档以及 `缺什么.txt`。实测 2–3 分钟。 |
-| 开口 | 离截止 4 小时内立刻开口，否则截止当天早上开口；有打扰预算；18:30 下班收尾。 |
-| 操作 | 「复制并打开微信」（pbcopy、打开微信、在访达里选中文档）；你在微信里发出相近的话后，承诺自动划掉。 |
-| 学习 | 「改一下」→ L1 判断这条意见能否成为规则 → 你点头后写进 `AGENTS.md` → 同一会话按意见重写；之后的新草稿会自动遵守。 |
-| 桌宠 | 透明置顶的 `NSPanel` + `WKWebView` 加载 `pet/`，窗口按内容伸缩，避免挡住别的应用。 |
-
-验证：`scripts/sim-wechat.mjs` 用模拟的微信画面走完真实模型链路（承诺识别 2.5 秒 → 起草 131 秒 → 驳回学到规则 → 第二份草稿自动遵守 → 发出后自动划掉）；在本机真实微信（英文界面）上已确认能截图、OCR 并识别会话。
-
-### M1 现状（2026-11-07）
-
-- 运行：`node desktop/serve.mjs`，打开 http://127.0.0.1:7799 ，按 → 或点「下一幕」。
-- 代码：`desktop/src/` 下是零依赖 ES 模块。`scenario.js` 是剧本，M2 只需要把其中「agent 做事」的部分换成 Bridge 推来的真实事件；`pet.js` 里的 `card()`、`insight()` 和 `apps.js` 里的修订接口保持不变。
-- 素材：界面直接读 `workspace-seed/`，和 M0 真跑用的是同一批文件，出处行号一致；剧本里新发的聊天也会同步追加到内存里的对应文件。两份草稿（`desktop/fixtures/`）按 M0 真实输出的格式手写，M2 起换成 agent 产出。
-- 回归：先启动 `desktop/serve.mjs`，再运行 `node scripts/desktop-e2e.mjs [url]`，会走完 7 幕并把截图写到 `shots/desktop/`。
-
----
-
-## 8. 风险与待验证
-
-| 项 | 风险 | 应对 |
-|---|---|---|
-| 没有中途取消 | SDK 不支持取消某一轮，只能关掉进程 | 每类任务单独开会话，并设上限；演示时不依赖取消 |
-| 模型输出质量波动 | 现场跑可能翻车 | 评审默认走 replay，live 只用来证明「这是真的」 |
-| 筛选误报 | 开口太多就成了 Clippy | 打扰预算 + 置信度阈值，演示素材里也放进一些「该忽略」的干扰事件 |
+历史 desktop/ 和 workspace-seed/ 为剧本演示。模拟聊天脚本只覆盖聊天专项。当前状态以本文件和 PRD 的验收边界为准。

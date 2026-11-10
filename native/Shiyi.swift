@@ -1,4 +1,4 @@
-// 拾遗.app：浮在所有窗口上方的桌宠 + 「眼睛」（只看微信窗口，本机 OCR）。
+// 拾遗.app：浮在所有窗口上方的桌宠 + 「眼睛」（白名单应用，本机 OCR）。
 // 业务逻辑全部在本机 daemon（node daemon/main.mjs）里；这里只负责：
 //   1) 透明置顶小窗，加载 http://127.0.0.1:7801/pet/
 //   2) 按设置的间隔：前台应用在白名单里、没暂停 → 截该窗口 → Vision OCR → POST /observe
@@ -9,8 +9,9 @@
 import Cocoa
 import WebKit
 import Vision
+import ApplicationServices
 
-let DAEMON = URL(string: "http://127.0.0.1:7801")!
+let DAEMON = URL(string: ProcessInfo.processInfo.environment["SHIYI_URL"] ?? "http://127.0.0.1:7801")!
 
 final class PetPanel: NSPanel {
     override var canBecomeKey: Bool { true }
@@ -29,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     var hitRects: [NSRect] = []          // 网页里可点的区域（左上角原点）；其余透明处点击穿透
     var dragging = false
     var hover: Timer?
+    var outsideMonitor: Any?
 
     func applicationDidFinishLaunching(_ n: Notification) {
         let cfg = WKWebViewConfiguration()
@@ -50,6 +52,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         place()
         panel.orderFrontRegardless()
         loadPet()
+        outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            DispatchQueue.main.async { self?.web.evaluateJavaScript("window.shiyiDismiss?.()", completionHandler: nil) }
+        }
 
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(appChanged(_:)),
             name: NSWorkspace.didActivateApplicationNotification, object: nil)
@@ -207,6 +212,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         URLSession.shared.dataTask(with: req).resume()
     }
+}
+
+// 可访问性操作桥：稳定元素索引仅对当前窗口快照有效。
+func axValue(_ e: AXUIElement, _ key: String) -> AnyObject? {
+    var v: CFTypeRef?; AXUIElementCopyAttributeValue(e, key as CFString, &v); return v
+}
+func axElements(_ root: AXUIElement) -> [AXUIElement] {
+    var out: [AXUIElement] = []
+    func walk(_ e: AXUIElement, _ depth: Int) {
+        if out.count >= 300 || depth > 12 { return }; out.append(e)
+        for child in axValue(e, kAXChildrenAttribute) as? [AXUIElement] ?? [] { walk(child, depth + 1) }
+    }
+    walk(root, 0); return out
+}
+if CommandLine.arguments.count >= 3 && ["--inspect", "--execute"].contains(CommandLine.arguments[1]) {
+    func output(_ obj: [String: Any]) { let d = try! JSONSerialization.data(withJSONObject: obj); FileHandle.standardOutput.write(d) }
+    guard AXIsProcessTrusted() else { output(["error": "需要在系统设置中授予 Shiyi 辅助功能权限"]); exit(1) }
+    let bundle = CommandLine.arguments[2]
+    guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundle).first,
+          NSWorkspace.shared.frontmostApplication?.bundleIdentifier == bundle else { output(["error": "目标应用必须在前台"]); exit(1) }
+    let root = AXUIElementCreateApplication(app.processIdentifier)
+    let elements = axElements(root)
+    if CommandLine.arguments[1] == "--inspect" {
+        output(["bundle": bundle, "elements": elements.enumerated().map { i, e -> [String: Any] in
+            ["id": i, "role": axValue(e, kAXRoleAttribute) as? String ?? "", "title": axValue(e, kAXTitleAttribute) as? String ?? "", "value": String((axValue(e, kAXValueAttribute) as? String ?? "").prefix(2000))]
+        }]); exit(0)
+    }
+    let data = FileHandle.standardInput.readDataToEndOfFile()
+    guard let command = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let id = command["id"] as? Int, elements.indices.contains(id) else { output(["error": "无效操作"]); exit(1) }
+    let e = elements[id]
+    guard axValue(e, kAXRoleAttribute) as? String != "AXSecureTextField" else { output(["error": "禁止操作密码框"]); exit(1) }
+    let op = command["op"] as? String ?? ""
+    var result = AXError.failure
+    if op == "setValue", let text = command["text"] as? String { result = AXUIElementSetAttributeValue(e, kAXValueAttribute as CFString, text as CFTypeRef) }
+    if op == "press" { result = AXUIElementPerformAction(e, kAXPressAction as CFString) }
+    output(["ok": result == .success, "code": result.rawValue, "value": axValue(e, kAXValueAttribute) as? String ?? ""]); exit(result == .success ? 0 : 1)
 }
 
 // 调试：Shiyi --ocr <图片>  → 打印 OCR 结果 JSON（不启动界面）

@@ -104,7 +104,7 @@ export class Harness {
     })
     try {
       await this.request('session/prompt', { sessionId, contentBlocks: [{ type: 'text', text }] }, 30_000)
-      await this.request('session/wait', { sessionId })
+      await this.request('session/wait', { sessionId }, 180_000)
     } finally {
       off()
     }

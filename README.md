@@ -1,98 +1,41 @@
-# 拾遗 · 一个不用吩咐的个人 Agent
+# 拾遗 · 桌面个人助手
 
-> 你在微信里随口答应别人的事，它记下、提前做好，在对的时候带着草稿来找你；
-> 你说一句「不对」，它就多学会一条你的做事方式。
+拾遗发现你正在使用的应用，询问是否观察；只对允许的前台应用做本机 OCR，理解页面文字变化，在值得帮助时提出建议、准备结果，或按独立操作权限执行。
 
-这是一个**跑在你自己 Mac 上的 agent 应用**：
-- 一只浮在所有窗口上方的桌宠；
-- 一双只看微信、在本机做 OCR 的「眼睛」；
-- 背后由 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 驱动的 DeepSeek agent，负责判断和起草。
+## 启动
 
-产品判断与设计见 [docs/proactive-agent/PRD.md](docs/proactive-agent/PRD.md) 和 [docs/proactive-agent/ARCHITECTURE.md](docs/proactive-agent/ARCHITECTURE.md)。
+需要 macOS 14+、Xcode Command Line Tools、Node 22+、已配置模型的 DeepSeek Harness。
 
----
-
-## 它在做什么
-
-```
-微信窗口 ──截图(本机)──▶ Vision OCR(本机) ──▶ 会话名 + 谁说了什么 + 哪些是新消息
-                                                        │
-                       L0 本机规则：像不像一个承诺？（不花钱，绝大多数到此为止）
-                                                        │
-                       L1 deepseek-v4-flash：是不是要兑现的承诺？对象、事项、时间
-                                                        │  记下（桌宠点头，不出声）
-                       L2 deepseek-v4-pro（Harness agent）：翻聊天和你的文件夹，
-                          在 ~/.shiyi/workspace/shadow/ 写好「要发的话」和文档，材料不够就写「缺什么」
-                                                        │
-                       在对的时候开口：离截止 4 小时内马上说，否则截止当天早上说
-                                                        │
-              你：复制并打开微信（最后一下由你按）/ 改一下（→ 它想想能否学成规则）/ 不用了
-                                                        │
-              你在微信里发出去了 → 它看到了，自动划掉
+```sh
+sh scripts/start-desktop.sh
 ```
 
-- **只看微信**：前台不是微信时什么都不截；私密应用在前台时桌宠闭眼；随时可以手动闭眼。
-- **截图和 OCR 都在本机**，送去模型的只有识别出的文字。
-- **原件永远不碰**：agent 只能写 `~/.shiyi/workspace/shadow/`，由 Harness sandbox 强制保证。
-- **越用越像你**：你确认过的规则写进 `~/.shiyi/workspace/AGENTS.md`，之后每次起草都会先读。
-- **两档起草**：只需回一句话的（「晚点回你」）只看聊天、几十秒写好；要交文档的才去翻材料目录。
-- **不编**：缺只有你知道的信息（去不去、具体数字）时，先问你「还缺什么」，补上之前不会写出「好了」的消息。
-- **「好的」也算**：对方提了请求、你只回「好的 / 收到 / OK」，同样会被当作承诺确认；英文聊天也认。
-- **18:30 下班收尾**：列出今天答应的事，标出哪些已兑现、哪些还在等你。
+默认后台端口 18746。此脚本启动原生透明桌面浮窗，无需浏览器。运行副本路径以脚本中的 DEST 为准；macOS 屏幕录制和辅助功能必须授权给同一运行副本。不要同时启动多个不同位置的 Shiyi。
 
-## 跑起来
+## 应用与权限
 
-需要：macOS 14+、Xcode Command Line Tools、Node 22+、[DeepSeek Harness 桌面版](https://github.com/deepseek-ai/deepseek-harness)（已登录或配置好 DeepSeek API key）、Mac 版微信。
+- 新应用进入前台时询问一次「看 / 不看」，设置只显示实际发现的应用。
+- 未允许的应用不读取页面。系统和敏感应用排除，闭眼或暂停会停止观察与执行。
+- 观察权限不包含操作权限。操作分为关闭、单步确认、指定具名文本控件自动填写。
+- 执行前复查页面快照；页面变化则拒绝旧计划。填写后重新读取文本值核对，点击结果保留为未验证，不宣称完成。
+- 页面文字会交给 DeepSeek 模型判断；OCR 在本机执行。材料目录用于只读查找，结果写入 shadow/。
 
-```bash
-sh scripts/build-native.sh        # 构建 native/build/Shiyi.app（桌宠 + 眼睛）
-node daemon/main.mjs              # 启动后台，并自动打开桌宠
-```
+## 当前能力与边界
 
-第一次运行时：
-1. 桌宠会提示需要「屏幕录制」权限。点气泡打开系统设置，在「隐私与安全性 → 屏幕录制」里勾选 **Shiyi**。
-2. 退出桌宠（鼠标移到桌宠上 → 退出），再重新执行一次 `node daemon/main.mjs`。
-3. 打开微信，进入一个聊天。第一次看到的会话只当作历史上下文，不会触发。接着发一句「明天上午发你周报」试试。
+通用页面变化建议、手动交办与页面快照、结果准备、单步 AX 操作规划与执行、操作日志。聊天承诺追踪是可选的增强解析能力，不是通用应用的准入条件。
 
-鼠标移到桌宠上会出现菜单：**闭眼 / 不看「当前会话」/ 我答应的事 / 它看到了什么 / 我的工作方式 / 退出**。按住桌宠可以拖到别处，位置会被记住；桌宠以外的透明区域不挡点击。
+当前不是视觉全能操作器：主要理解 OCR 文字，AX 控件支持 setValue / press；没有通用多步任务循环。自动填写和原生完整链路仍需系统权限后的真实控件测试。真实模型的建议判断和单步规划已独立测试通过。
 
-配置在 `~/.shiyi/config.json`：
-- `materials`：agent 可以只读查找材料的目录
-- `privateApps`、`ignoreConvs`：私密应用名单、不看的会话
-- `morningAt`、`wrapUpAt`：早上开口和下班收尾的时间
-- `speakBudgetPerHour`：每小时最多主动开口几次
-- `wechatListWidth`：会话列表宽度，自动识别不准时手动填
+## 代码
 
-## 目录
+- native/Shiyi.swift：原生浮窗、前台应用发现、OCR、AX 桥。
+- daemon/perceive.mjs：应用分类与通用感知辅助。
+- daemon/main.mjs：授权、页面变化、建议、任务和 HTTP/SSE。
+- daemon/actions.mjs：操作权限、快照检查、执行与验证。
+- daemon/agent.mjs、bridge/harness.mjs：真实模型与 Harness 接线。
+- daemon/layout.mjs：仅用于已适配聊天应用的增强解析。
+- pet/：原生浮窗内的界面。
+- desktop/、workspace-seed/：历史「林夏的一天」剧本演示，不代表真实后台能力。
+- scripts/sim-chat.mjs、sim-wechat.mjs：聊天专项测试工具。
 
-```
-native/Shiyi.swift      桌宠窗口 + 微信截图 + Vision OCR（原生，约 200 行）
-daemon/                 后台：wechat.mjs 版式解析与去重 · agent.mjs Harness 接线与手册 · main.mjs 筛选/开口/操作/HTTP
-pet/                    桌宠页面（跑在原生透明窗口里）
-bridge/harness.mjs      零依赖 DeepSeek Harness SDK 客户端（stdio JSON-RPC）
-scripts/                build-native.sh · sim-wechat.mjs（不开微信也能测）· pet-shots.mjs · desktop-e2e.mjs
-desktop/ workspace-seed/  「林夏的一天」演示模式（给评审 5 分钟看完整故事，剧本数据）
-docs/                   产品文档、框架设计、2026 趋势研究
-```
-
-## 不开微信也能测
-
-```bash
-SHIYI_DRY=1 SHIYI_HOME=/tmp/shiyi-test node daemon/main.mjs --no-pet --port 7811   # SHIYI_DRY：不真的改剪贴板、不打开微信
-node scripts/sim-wechat.mjs 7811 王建国 "other:能先给我一版竞品对比吗"
-node scripts/sim-wechat.mjs 7811 王建国 "other:能先给我一版竞品对比吗" "me:好的王总，明天上午发你竞品对比"
-```
-
-第一条消息会被当作历史上下文；第二条会走完 L0 → L1 → L2 的真实链路。用浏览器打开 http://127.0.0.1:7811/pet/?view=insight 可以看到每一步。
-
-## 演示模式
-
-```bash
-node desktop/serve.mjs            # http://127.0.0.1:7799 ，按 → 一幕一幕看「林夏的一天」
-```
-
-## 边界
-
-- 眼睛只认 Mac 版微信，靠版式识别「谁说的」，群聊里对方的名字可能识别不准；可以在 config 里调整会话列表宽度。
-- 「发」永远由你按：拾遗只复制消息、打开微信，并在访达里选中文档。
-- 每次重新构建 `Shiyi.app`，macOS 会把它当成新应用，需要重新授权屏幕录制（ad-hoc 签名的限制）。
+PRD 与架构位于 docs/proactive-agent/；其中早期微信 M2 和剧本场景为历史阶段设计，当前行为以实际实现及上述边界为准。

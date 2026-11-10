@@ -2,13 +2,15 @@
 // 拾遗 daemon：感知 → 筛选 → 记下 → 起草 → 在对的时候开口 → 从驳回里学习。
 //   node daemon/main.mjs [--port 7801] [--no-pet]
 import { createServer } from 'node:http'
-import { readFileSync, existsSync, statSync, rmSync, readdirSync } from 'node:fs'
+import { readFileSync, existsSync, statSync, rmSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join, dirname, extname, normalize, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFile, spawn } from 'node:child_process'
 import { state, live, config, saveConfig, APPS, findApp, appName, watching, paused, rawMaterials, WS, HOME, subscribe, changed, save, insight, card, dropCard, maySpeak, spoke, hm, ymd, uid } from './store.mjs'
+import { inspect, digest, executePlan } from './actions.mjs'
+import { appInfo, NEVER, ocrText, fingerprint } from './perceive.mjs'
 import { parseChat, parseBubble, diff, keyOf } from './layout.mjs'
-import { appendTranscript, transcriptName, judgeCommitment, judgeRule, parseTask, draft, redraft, supply, writeHandbook, shutdownAgents, safe } from './agent.mjs'
+import { appendTranscript, transcriptName, judgeCommitment, judgeRule, parseTask, draft, redraft, supply, writeHandbook, shutdownAgents, safe, judgeOpportunity, reviewContext, planAction, executeTask } from './agent.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
@@ -33,6 +35,7 @@ let observing = false
 
 let lastObs = null   // 调试：最近一次 OCR 原始结果（只在内存里，GET /debug/last 查看）
 async function onObserve(obs) {
+  if (NEVER.has(obs.bundle) || !live.eyes || paused() || config.apps[obs.bundle] !== 'on') return
   live.lastObserveAt = Date.now()
   lastObs = obs
   // 白名单是最后一道关：原生端本来也只截白名单里的应用
@@ -40,6 +43,7 @@ async function onObserve(obs) {
   observing = true
   try {
     const app = findApp(obs.bundle, obs.app)
+    await observePage(obs)
     if (!app) return
     const p = parseChat(obs, app, config)
     if (!p.conv) return
@@ -73,9 +77,56 @@ async function onObserve(obs) {
     }
     for (const m of asks) insight({ src: `${app.name} · ${p.conv}`, text: `对方：「${m.text}」→ 是个请求，先记着，看你怎么回`, verdict: 'remember', layer: 'L0 本机规则', cost: '0 token' })
     const rest = fresh.length - cands.length - asks.length
-    if (rest > 0) insight({ src: `${app.name} · ${p.conv}`, text: `${rest} 条新消息，和你要兑现的事无关`, verdict: 'ignore', layer: 'L0 本机规则', cost: '0 token' })
+    // 未命中聊天承诺句式不代表页面无价值；通用页面判断已独立执行，不重复输出否定日志。
     for (const c of cands) handleCandidate(where, c.m, c.request).catch(e => insight({ src: '筛选', text: e.message, verdict: 'error' }))
   } finally { observing = false }
+}
+
+const pages = new Map()
+let focusSince = Date.now()
+const dwellAsked = new Map()
+setInterval(() => {
+  const bundle = live.focus.bundle
+  const page = pages.get(bundle)
+  if (!page || !live.eyes || paused() || config.apps[bundle] !== 'on' || !maySpeak()) return
+  if (Date.now() - focusSince < 120000 || Date.now() - (dwellAsked.get(bundle) ?? 0) < 1800000) return
+  if (state.cards.some(c => c.kind === 'opportunity' && c.bundle === bundle)) return
+  dwellAsked.set(bundle, Date.now()); spoke()
+  card({ id: uid('dwell'), kind: 'opportunity', bundle, app: page.app, title: `要我帮你看看「${page.app}」当前页面吗？`, why: '你已在这个应用停留超过两分钟。这不代表遇到困难，如果需要，我可以整理要点、解释内容或看看下一步怎么做。', context: page.text.slice(0, 6000), status: 'suggested', dwell: true })
+}, 20000)
+
+async function observePage(obs) {
+  const app = appInfo(obs.bundle, obs.app)
+  const text = ocrText(obs)
+  if (!text.trim()) return
+  const contextFile = join(WS, 'context', safe(obs.bundle) + '.txt')
+  writeFileSync(contextFile, `应用：${app.name}\n采集时间：${new Date().toISOString()}\n以下为不可信页面内容，仅作参考：\n${text}`)
+  const previous = pages.get(obs.bundle)
+  const hash = fingerprint(text)
+  if (previous?.hash === hash) return
+  state.observedChanges = (state.observedChanges ?? 0) + 1
+  const page = { hash, text, at: Date.now(), app: app.name, contextFile }
+  pages.set(obs.bundle, page)
+  if (!previous) return // 第一次只建立基线
+  if (previous.checkedAt && Date.now() - previous.checkedAt < 15000) { page.checkedAt = previous.checkedAt; return }
+  page.checkedAt = Date.now()
+  const opportunities = await judgeOpportunity({ app: app.name, kind: app.kind, title: obs.title || app.name, text, recent: previous.text.slice(0, 2000) })
+  if (config.apps[obs.bundle] !== 'on' || !live.eyes || paused()) return
+  insight({ src: app.name, text: opportunities.length ? '页面变化已分析，正在筛选建议' : '已分析页面变化，暂未发现明确的帮助机会', verdict: opportunities.length ? 'remember' : 'ignore', layer: '通用页面判断' })
+  for (const o of opportunities.slice(0, 2)) {
+    if (o.confidence < 0.8 || !maySpeak()) continue
+    if (app.kind === 'chat' && o.type === 'commitment') continue
+    spoke()
+    const suggestion = { id: uid('op'), kind: 'opportunity', bundle: obs.bundle, app: app.name, title: o.todo || o.what, why: o.why, quote: o.quote, context: text.slice(0, 6000), hash, status: 'suggested' }
+    card(suggestion)
+    if (config.operations?.[obs.bundle] === 'auto' && config.autoTargets?.[obs.bundle]?.length) {
+      try {
+        const page = await inspect(obs.bundle)
+        const plan = await planAction({ goal: suggestion.title, page })
+        if (plan.step) { suggestion.plan = { ...plan, snapshot: digest(page) }; await executePlan(suggestion, true) }
+      } catch (e) { suggestion.executionMessage = e.message; changed() }
+    }
+  }
 }
 
 async function handleCandidate(where, m, request) {
@@ -125,16 +176,26 @@ function checkFulfilled(convId, fresh) {
 function markDone(c, how) {
   c.status = 'done'; c.doneAt = hm(); c.confirmQuote = ''
   dropCard('c:' + c.id)
-  insight({ src: c.source === 'manual' ? '你交办的' : `${c.app || '微信'} · ${c.conv}`, text: `${how}：${c.todo || c.what} ✓`, verdict: 'done' })
+  insight({ src: c.source === 'manual' ? '你交办的' : `${c.app || '来源应用'} · ${c.conv}`, text: `${how}：${c.todo || c.what} ✓`, verdict: 'done' })
 }
 
 /* ═════════════ 起草 → 开口 ═════════════ */
 
 const onTool = tool => { live.lastTool = describeTool(tool); changed() }
 
+function startTask(c) {
+  if (c.status === 'running') return
+  c.status = 'running'; c.progress = '正在读取任务与制定计划'; c.error = ''; changed()
+  executeTask(c, tool => { c.progress = describeTool(tool); changed() }).then(result => {
+    c.status = result.status; c.progress = result.summary; c.verification = result.verification; c.resultFiles = result.files
+    card({ id: 'task:' + c.id, kind: 'task-result', commitmentId: c.id, title: c.what, status: c.status, message: c.progress, files: c.resultFiles, verification: c.verification })
+    changed()
+  }).catch(e => { c.status = 'failed'; c.error = e.message; c.progress = e.message; changed() })
+}
+
 function startDraft(c) {
   c.status = 'drafting'; changed()
-  insight({ src: '起草', text: `开始起草：${c.todo || c.what}（${c.kind === 'deliverable' ? '要交文档，会翻你的材料目录' : '只写一段回复'}）`, verdict: 'draft', layer: `L2 ${config.draftModel}` })
+  insight({ src: '起草', text: `开始起草：${c.todo || c.what}（${c.source === 'manual' ? '处理交办任务' : c.kind === 'deliverable' ? '准备交付物' : '准备回复'}）`, verdict: 'draft', layer: `L2 ${config.draftModel}` })
   const t0 = Date.now()
   draft(c, onTool)
     .then(d => {
@@ -167,13 +228,16 @@ function speakAt(c) {
 }
 
 function commitmentCard(c) {
+  if (c.source === 'manual' && c.progress) {
+    card({ id: 'task:' + c.id, kind: 'task-result', commitmentId: c.id, title: c.what, status: c.status, message: c.progress, files: c.resultFiles || [], verification: c.verification }); dropCard('c:' + c.id); return
+  }
   const d = c.draft ?? {}
   const waiting = d.missing && !d.message
   const place = c.app && c.app !== '微信' ? `${c.app} 的${c.conv}` : c.conv
   const said = c.source === 'manual' ? `你交给我的：「${c.quote}」` : c.request ? `${place}里问「${c.request}」，你回「${c.quote}」` : `你在和${place}聊天时说「${c.quote}」`
   const whose = c.source === 'manual' ? '你交给我的' : `你答应${c.to}的`
   card({
-    id: 'c:' + c.id, kind: 'commitment', commitmentId: c.id, conv: c.conv, app: c.app || (c.source === 'manual' ? '' : '微信'),
+    id: 'c:' + c.id, kind: 'commitment', source: c.source, commitmentId: c.id, conv: c.conv, app: c.app || (c.source === 'manual' ? '' : '微信'),
     phase: c.confirmQuote ? 'confirm' : c.status === 'copied' ? 'copied' : waiting ? 'missing' : 'ready',
     title: c.confirmQuote ? `你在和${place}的聊天里发了一条消息，这就是「${c.what}」吗？`
       : waiting ? `${whose}「${c.what}」，还差一点信息` : `${whose}「${c.what}」，我起草好了`,
@@ -211,16 +275,17 @@ function wrapCard() {
 
 const askedLater = new Set()   // 本次运行里你点了「先不说」的应用
 const seenBundles = {}   // 应用名 → 你实际打开时的 bundle id（registry 里没列到的版本也能进白名单）
-const bundlesOf = name => [...new Set([...(APPS.find(a => a.name === name)?.bundles ?? []), ...(seenBundles[name] ?? []), ...Object.keys(config.apps).filter(b => findApp(b)?.name === name || config.appNames?.[b] === name)])]
+const bundlesOf = name => [...new Set([...(APPS.find(a => a.name === name)?.bundles ?? []), ...(seenBundles[name] ?? []), ...Object.keys(config.discoveredApps ?? {}).filter(b => config.discoveredApps[b] === name), ...Object.keys(config.apps).filter(b => findApp(b)?.name === name || config.appNames?.[b] === name)])]
 function setApp(name, value) {
   const apps = { ...config.apps }, appNames = { ...(config.appNames ?? {}) }
   for (const b of bundlesOf(name)) { if (value) { apps[b] = value; appNames[b] = name } else { delete apps[b]; delete appNames[b] } }
   saveConfig({ apps, appNames })
 }
 function maybeAskConsent(bundle, focusName) {
-  const app = findApp(bundle, focusName)
-  if (!app) return
+  if (!bundle || NEVER.has(bundle)) return
+  const app = appInfo(bundle, focusName)
   ;(seenBundles[app.name] ??= new Set()).add(bundle)
+  if (config.discoveredApps?.[bundle] !== app.name) saveConfig({ discoveredApps: { ...(config.discoveredApps ?? {}), [bundle]: app.name } })
   if (config.apps[bundle]) return
   // 同一个应用的另一个版本你已经决定过（比如国际版 / 国内版）：沿用决定，不再问
   const decided = bundlesOf(app.name).map(b => config.apps[b]).find(Boolean)
@@ -248,6 +313,40 @@ function follow(c, job, what) {
 async function onAction(a) {
   const c = a.commitmentId ? state.commitments.find(x => x.id === a.commitmentId) : null
   switch (a.type) {
+    case 'operation-permission': {
+      const bundle = Object.keys(config.appNames ?? {}).find(b => config.appNames[b] === a.app)
+      if (!bundle || !['off', 'ask', 'auto'].includes(a.value)) break
+      const operations = { ...(config.operations ?? {}), [bundle]: a.value }
+      const autoTargets = { ...(config.autoTargets ?? {}), [bundle]: String(a.targets ?? '').split('、').map(s => s.trim()).filter(Boolean) }
+      saveConfig({ operations, autoTargets }); break
+    }
+    case 'plan-page': {
+      const cd = state.cards.find(x => x.id === a.cardId && x.kind === 'opportunity')
+      if (!cd || config.apps[cd.bundle] !== 'on') break
+      const page = await inspect(cd.bundle)
+      const plan = await planAction({ goal: cd.title, page })
+      if (!plan.step) { cd.executionMessage = plan.why; break }
+      cd.plan = { ...plan, snapshot: digest(page) }; cd.execution = 'planned'; changed()
+      if (config.operations?.[cd.bundle] === 'auto') await executePlan(cd, true)
+      break
+    }
+    case 'execute-page': {
+      const cd = state.cards.find(x => x.id === a.cardId && x.kind === 'opportunity')
+      if (cd) await executePlan(cd)
+      break
+    }
+    case 'review-page': {
+      const cd = state.cards.find(x => x.id === a.cardId && x.kind === 'opportunity')
+      if (!cd || cd.status === 'working' || config.apps[cd.bundle] !== 'on' || !live.eyes || paused()) break
+      cd.status = 'working'; cd.startedAt = Date.now(); cd.error = ''; cd.progress = '等待模型执行，最长三分钟'; changed()
+      const dir = join(WS, 'context'); mkdirSync(dir, { recursive: true })
+      const path = join(dir, cd.id + '.txt'); writeFileSync(path, cd.context)
+      try {
+        const result = await reviewContext({ id: cd.id, app: cd.app, kind: appInfo(cd.bundle).kind, title: cd.title, contextFile: path }, tool => { cd.progress = describeTool(tool); onTool(tool) })
+        cd.result = result.text || result.summary; cd.status = 'ready'
+      } catch (e) { cd.status = 'failed'; cd.error = e.message }
+      break
+    }
     case 'eyes':
       live.eyes = !!a.on
       insight({ src: '你', text: a.on ? '睁眼' : '闭眼：什么都不看', verdict: a.on ? 'remember' : 'private' })
@@ -256,10 +355,10 @@ async function onAction(a) {
     case 'copy': {
       if (!c?.draft?.message) break
       await sh('pbcopy', [], c.draft.message)
-      if (c.source !== 'manual') await sh('open', ['-b', c.bundle || 'com.tencent.xinWeChat'])
+      if (c.bundle && config.apps[c.bundle] === 'on') await sh('open', ['-b', c.bundle])
       if (c.draft.docs?.[0]) await sh('open', ['-R', join(WS, c.draft.docs[0])])
       c.status = 'copied'; c.confirmQuote = ''; commitmentCard(c)
-      insight({ src: '你', text: `复制了给${c.to}的消息${c.source !== 'manual' ? `，打开了${c.app || '微信'}` : ''}${c.draft.docs?.[0] ? '，文档在访达里选中了' : ''}`, verdict: 'done', layer: '对外发送：最后一下由你按' })
+      insight({ src: '你', text: `复制了给${c.to}的消息${c.source !== 'manual' ? `，打开了${c.app || '来源应用'}` : ''}${c.draft.docs?.[0] ? '，文档在访达里选中了' : ''}`, verdict: 'done', layer: '对外发送：最后一下由你按' })
       break
     }
     case 'sent':
@@ -324,20 +423,14 @@ async function onAction(a) {
     case 'add-task': {
       const text = (a.text ?? '').trim(); if (!text) break
       insight({ src: '你', text: `交给拾遗一件事：「${text}」`, verdict: 'remember' })
-      parseTask(text).then(j => {
-        const t = {
-          id: uid('c'), source: 'manual', key: 'manual:' + text, conv: '', to: j.to || '', what: j.what || text, todo: j.todo || text, quote: text, request: '',
-          kind: ['reply', 'deliverable', 'action'].includes(j.kind) ? j.kind : 'action',
-          due: j.due || null, dueText: j.dueText || '', draftable: j.draftable === true && j.kind !== 'action',
-          at: new Date().toISOString(), status: 'open', transcript: '',
-        }
-        state.commitments.push(t)
-        insight({ src: '你', text: `记下了：${t.dueText ? t.dueText + ' · ' : ''}${t.todo}`, verdict: 'remember', layer: `L1 ${config.triageModel}` })
-        changed()
-        if (t.draftable) startDraft(t)
-      }).catch(e => insight({ src: '交办', text: e.message, verdict: 'error' }))
+      const t = { id: uid('c'), source: 'manual', what: text, todo: text, quote: text, at: new Date().toISOString(), status: 'queued', contextFiles: [...pages.entries()].filter(([b]) => config.apps[b] === 'on').map(([, p]) => p.contextFile) }
+      state.commitments.push(t); changed(); startTask(t)
+
       break
     }
+    case 'task-retry':
+      if (c && c.source === 'manual' && c.status !== 'running') { c.supplement = String(a.info || ''); startTask(c) }
+      break
     case 'task-done':
       if (c) markDone(c, '你标记完成了')
       break
@@ -410,14 +503,14 @@ function snapshot() {
   const mode = !live.eyes || isPaused ? 'closed' : live.working ? 'work' : live.thinking ? 'think' : state.cards.length ? 'call' : watchingNow ? 'watch' : 'idle'
 
   return {
-    mode, eyes: live.eyes, paused: isPaused, pauseUntil: config.pauseUntil, wechat: watchingNow, watchingApp: watchingNow ? appName(live.focus.bundle) : '',
+    mode, eyes: live.eyes, paused: isPaused, pauseUntil: config.pauseUntil, watching: watchingNow, watchingApp: watchingNow ? appName(live.focus.bundle) : '',
     focus: live.focus, screenAccess: live.screenAccess,
     watch: { bundles: on, interval: config.captureIntervalSec, paused: isPaused || !live.eyes },
-    apps: APPS.map(a => { const v = bundlesOf(a.name).map(b => config.apps[b]); return { name: a.name, family: a.family, state: v.includes('on') ? 'on' : v.includes('off') ? 'off' : 'unasked' } }),
+    apps: [...new Set([...Object.values(config.discoveredApps ?? {}), ...Object.keys(seenBundles)])].map(name => ({ name })).map(a => { const v = bundlesOf(a.name).map(b => config.apps[b]); return { name: a.name, family: a.family, operation: config.operations?.[bundlesOf(a.name)[0]] ?? 'off', autoTargets: config.autoTargets?.[bundlesOf(a.name)[0]] ?? [], state: v.includes('on') ? 'on' : v.includes('off') ? 'off' : 'unasked' } }),
     settings: { myNames: config.myNames, captureIntervalSec: config.captureIntervalSec, morningAt: config.morningAt, wrapUpAt: config.wrapUpAt, speakBudgetPerHour: config.speakBudgetPerHour, materials: rawMaterials() },
     seeing: Date.now() - live.lastObserveAt < 10_000, currentConv: live.currentConv, ignoreConvs: config.ignoreConvs,
     working: live.working, thinking: live.thinking, lastTool: live.lastTool ?? '', nod: live.nod, nodText: live.nodText,
-    cards: state.cards, rules: state.rules, insight: state.insight.slice(-120), seenCount: state.seenCount,
+    observedChanges: state.observedChanges ?? 0, cards: state.cards, rules: state.rules, insight: state.insight.slice(-120), seenCount: state.seenCount,
     commitments: state.commitments.slice(-40), wrapUpAt: config.wrapUpAt, home: HOME,
   }
 }
@@ -432,9 +525,9 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x')
   const p = decodeURIComponent(url.pathname)
   try {
-    if (req.method === 'POST' && p === '/observe') { onObserve(await body(req)); return res.end('ok') }
+    if (req.method === 'POST' && p === '/observe') { onObserve(await body(req)).catch(e => insight({ src: '感知', text: e.message, verdict: 'error' })); return res.end('ok') }
     if (req.method === 'POST' && p === '/focus') {
-      const b = await body(req); live.focus = { bundle: b.bundle, name: b.name }; live.screenAccess = b.screenAccess !== false
+      const b = await body(req); if (live.focus.bundle !== b.bundle) { focusSince = Date.now(); live.currentConv = '' } live.focus = { bundle: b.bundle, name: b.name }; live.screenAccess = b.screenAccess !== false
       if (live.eyes && !paused()) maybeAskConsent(b.bundle, b.name)
       changed(); return res.end('ok')
     }
@@ -469,12 +562,14 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`拾遗 daemon → http://127.0.0.1:${PORT}/pet/   数据：${HOME}`)
-  const app = join(ROOT, 'native/build/Shiyi.app')
+  const app = process.env.SHIYI_NATIVE_APP || join(ROOT, 'native/build/Shiyi.app')
   if (!args.includes('--no-pet')) {
-    if (existsSync(app)) spawn('open', [app], { stdio: 'ignore' })
+    if (existsSync(app)) spawn('open', ['--env', `SHIYI_URL=http://127.0.0.1:${PORT}`, app], { stdio: 'ignore' })
     else console.log('（还没构建桌宠：sh scripts/build-native.sh）')
   }
+  for (const c of state.cards.filter(c => c.kind === 'opportunity' && c.status === 'working')) { c.status = 'failed'; c.error = '上次处理被后台重启中断，请重试'; changed() }
   // 上次退出时还在起草的，接着起草
+  for (const c of state.commitments.filter(c => c.status === 'running')) { c.status = 'blocked'; c.progress = '后台曾中断，请重试任务'; changed() }
   for (const c of state.commitments.filter(c => c.status === 'drafting')) { c.status = 'open'; if (c.draftable) startDraft(c) }
   tick()
 })
