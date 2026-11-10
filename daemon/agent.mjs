@@ -11,7 +11,8 @@ mkdirSync(join(WS, 'chat'), { recursive: true })
 /* ── 手册：规则是唯一数据源，渲染进 AGENTS.md，Harness 每个新会话自动加载 ── */
 export function writeHandbook() {
   const rules = state.rules.filter(r => r.enabled !== false)
-  writeFileSync(join(WS, 'AGENTS.md'), `# 拾遗的电脑
+  writeFileSync(join(WS, 'AGENTS.md'), `<!-- 本文件由拾遗生成。规则请在桌宠菜单「我的工作方式」里改；直接改这里会被覆盖。 -->
+# 拾遗的电脑
 
 你是「拾遗」，这台 Mac 使用者（下称「用户」）的常驻助手。本文件所在目录是你的工作区（下称「电脑根目录」）：
 
@@ -87,6 +88,20 @@ export async function judgeCommitment({ conv, recent, quote, request }) {
   } finally { live.thinking--; changed() }
 }
 
+/** L1：把用户手动交办的一句话解析成一件要盯的事。 */
+export async function parseTask(text) {
+  triageSession ??= `shiyi-triage-${Date.now().toString(36)}`
+  live.thinking++; changed()
+  try {
+    const out = await run('triage', triageSession, [
+      '你是「拾遗」的筛选器，只做解析，不调用任何工具。',
+      `现在是 ${new Date().toLocaleString('zh-CN', { hour12: false })}。用户直接交给你一件事：「${text}」`,
+      '只输出一行 JSON：{"to":"对象（没有就空）","what":"要交付的事（简短名词短语）","todo":"动宾短语","kind":"reply|deliverable|action","due":"ISO 8601 时间或 null","dueText":"原话里的时间说法或空","draftable":true|false}',
+    ].join('\n'))
+    return parseJson(out)
+  } finally { live.thinking--; changed() }
+}
+
 /** L1：一句驳回意见能否沉淀成以后都适用的规则？ */
 export async function judgeRule({ reason, context }) {
   triageSession ??= `shiyi-triage-${Date.now().toString(36)}`
@@ -108,14 +123,16 @@ const NO_MISSING_MESSAGE = '如果写了 `缺什么.txt`，就不要写 `消息.
 export async function draft(c, onTool) {
   mkdirSync(join(SHADOW, c.id), { recursive: true })
   c.session ??= `shiyi-draft-${c.id}`
-  const head = `用户在微信里${c.request ? `被「${c.to}」问「${c.request}」时回了` : `答应了「${c.to}」`}：「${c.quote}」${c.dueText ? `（时间：${c.dueText}）` : ''}。要兑现的事：${c.what}。聊天记录：${c.transcript}（电脑根目录下）。`
+  const head = c.source === 'manual'
+    ? `用户直接交给你一件事：「${c.quote}」${c.dueText ? `（时间：${c.dueText}）` : ''}。要做的事：${c.what}${c.to ? `，对象：${c.to}` : ''}。`
+    : `用户在微信里${c.request ? `被「${c.to}」问「${c.request}」时回了` : `答应了「${c.to}」`}：「${c.quote}」${c.dueText ? `（时间：${c.dueText}）` : ''}。要兑现的事：${c.what}。聊天记录：${c.transcript}（电脑根目录下）。`
   const body = c.kind === 'deliverable' ? [
     `用户的材料目录（只读）：${config.materials.join('、')}。先找齐完成这件事需要的材料，然后在当前工作目录（shadow/）下的文件夹 ${c.id}/ 里写：`,
     '1. `<文档名>.md`：要交付的文档，每个论断标出处；材料不够的部分留空并标注；',
     '2. `消息.txt`：用户可以直接粘贴到微信发给对方的话，简短自然，用用户的口吻，遵守手册里适用的规则；',
     '3. 材料不足以完成时，写 `缺什么.txt`，用要问用户的问题列出缺的信息，不要编造。' + NO_MISSING_MESSAGE,
   ] : [
-    `这件事只需要回复一段话。只根据聊天记录，在当前工作目录（shadow/）下的文件夹 ${c.id}/ 里写 \`消息.txt\`：用户直接粘贴发出的话，简短自然，用用户的口吻，遵守手册里适用的规则。不要去材料目录翻文件。`,
+    `这件事只需要回复一段话。只根据聊天记录（手动交办的就根据交办内容），在当前工作目录（shadow/）下的文件夹 ${c.id}/ 里写 \`消息.txt\`：用户直接粘贴发出的话，简短自然，用用户的口吻，遵守手册里适用的规则。不要去材料目录翻文件。`,
     '如果回复需要只有用户才知道的信息（具体时间、数字、决定），写 `缺什么.txt` 列出要问用户的问题。' + NO_MISSING_MESSAGE,
   ]
   live.working++; changed()

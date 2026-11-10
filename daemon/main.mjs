@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { execFile, spawn } from 'node:child_process'
 import { state, live, config, saveConfig, WS, HOME, subscribe, changed, save, insight, card, dropCard, maySpeak, spoke, hm, ymd, uid } from './store.mjs'
 import { parseWeChat, diff, keyOf } from './wechat.mjs'
-import { appendTranscript, judgeCommitment, judgeRule, draft, redraft, supply, writeHandbook, shutdownAgents, safe } from './agent.mjs'
+import { appendTranscript, judgeCommitment, judgeRule, parseTask, draft, redraft, supply, writeHandbook, shutdownAgents, safe } from './agent.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
@@ -86,7 +86,7 @@ async function handleCandidate(conv, m, transcript, request) {
     return
   }
   const c = {
-    id: uid('c'), key: k, conv, to: j.to || conv, what: j.what || m.text, todo: j.todo || '', quote: m.text, request: request || '',
+    id: uid('c'), source: 'wechat', key: k, conv, to: j.to || conv, what: j.what || m.text, todo: j.todo || '', quote: m.text, request: request || '',
     kind: ['reply', 'deliverable', 'action'].includes(j.kind) ? j.kind : 'reply',
     due: j.due || null, dueText: j.dueText || '', draftable: j.draftable !== false && j.kind !== 'action',
     at: new Date().toISOString(), status: 'open', transcript,
@@ -117,7 +117,7 @@ function checkFulfilled(conv, fresh) {
 function markDone(c, how) {
   c.status = 'done'; c.doneAt = hm(); c.confirmQuote = ''
   dropCard('c:' + c.id)
-  insight({ src: `微信 · ${c.conv}`, text: `${how}：${c.todo || c.what} ✓`, verdict: 'done' })
+  insight({ src: c.source === 'manual' ? '你交办的' : `微信 · ${c.conv}`, text: `${how}：${c.todo || c.what} ✓`, verdict: 'done' })
 }
 
 /* ═════════════ 起草 → 开口 ═════════════ */
@@ -161,12 +161,13 @@ function speakAt(c) {
 function commitmentCard(c) {
   const d = c.draft ?? {}
   const waiting = d.missing && !d.message
-  const said = c.request ? `${c.conv}问「${c.request}」，你回「${c.quote}」` : `你在和${c.conv}聊天时说「${c.quote}」`
+  const said = c.source === 'manual' ? `你交给我的：「${c.quote}」` : c.request ? `${c.conv}问「${c.request}」，你回「${c.quote}」` : `你在和${c.conv}聊天时说「${c.quote}」`
+  const whose = c.source === 'manual' ? '你交给我的' : `你答应${c.to}的`
   card({
     id: 'c:' + c.id, kind: 'commitment', commitmentId: c.id, conv: c.conv,
     phase: c.confirmQuote ? 'confirm' : c.status === 'copied' ? 'copied' : waiting ? 'missing' : 'ready',
     title: c.confirmQuote ? `你在和${c.conv}的聊天里发了一条消息，这就是「${c.what}」吗？`
-      : waiting ? `你答应${c.to}的「${c.what}」，还差一点信息` : `你答应${c.to}的「${c.what}」，我起草好了`,
+      : waiting ? `${whose}「${c.what}」，还差一点信息` : `${whose}「${c.what}」，我起草好了`,
     why: `${c.dueText ? c.dueText + '要交。' : ''}${said}`,
     message: d.message, docs: d.docs, missing: d.missing, confirmQuote: c.confirmQuote,
   })
@@ -192,7 +193,7 @@ const todays = () => state.commitments.filter(c => c.status !== 'dropped' && (c.
 function wrapCard() {
   const list = todays()
   card({
-    id: 'wrap', kind: 'wrap', title: `今天你答应了 ${list.length} 件事`,
+    id: 'wrap', kind: 'wrap', title: `今天在帮你盯的 ${list.length} 件事`,
     items: list.map(c => ({ id: c.id, to: c.to, what: c.what, todo: c.todo, status: c.status, doneAt: c.doneAt, dueText: c.dueText })),
   })
 }
@@ -223,7 +224,7 @@ async function onAction(a) {
     case 'copy': {
       if (!c?.draft?.message) break
       await sh('pbcopy', [], c.draft.message)
-      await sh('open', ['-b', 'com.tencent.xinWeChat'])
+      if (c.source !== 'manual') await sh('open', ['-b', 'com.tencent.xinWeChat'])
       if (c.draft.docs?.[0]) await sh('open', ['-R', join(WS, c.draft.docs[0])])
       c.status = 'copied'; c.confirmQuote = ''; commitmentCard(c)
       insight({ src: '你', text: `复制了给${c.to}的消息，打开了微信${c.draft.docs?.[0] ? '，文档在访达里选中了' : ''}`, verdict: 'done', layer: '对外发送：最后一下由你按' })
@@ -265,9 +266,48 @@ async function onAction(a) {
       dropCard(a.cardId)
       break
     }
-    case 'rule-off':
+    case 'rule-toggle': {
+      const r = state.rules.find(r => r.id === a.id); if (!r) break
+      r.enabled = !!a.enabled; writeHandbook()
+      insight({ src: '我的工作方式', text: `${r.enabled ? '重新启用' : '停用'}：${r.text}`, verdict: 'learn' })
+      break
+    }
+    case 'rule-edit': {
+      const r = state.rules.find(r => r.id === a.id); if (!r || !a.text?.trim()) break
+      r.text = a.text.trim(); r.scope = (a.scope ?? '').trim(); r.editedAt = `${ymd()} ${hm()}`; writeHandbook()
+      insight({ src: '我的工作方式', text: `你改了一条规则：${r.text}${r.scope ? `（适用：${r.scope}）` : ''}`, verdict: 'learn' })
+      break
+    }
+    case 'rule-add': {
+      if (!a.text?.trim()) break
+      state.rules.push({ id: uid('r'), text: a.text.trim(), scope: (a.scope ?? '').trim(), learnedFrom: '你手动加的', at: `${ymd()} ${hm()}`, enabled: true })
+      writeHandbook()
+      insight({ src: '我的工作方式', text: `你加了一条规则：${a.text.trim()}`, verdict: 'learn' })
+      break
+    }
+    case 'rule-delete':
       state.rules = state.rules.filter(r => r.id !== a.id); writeHandbook()
-      insight({ src: '你', text: '停用了一条规则', verdict: 'learn' })
+      insight({ src: '我的工作方式', text: '删掉了一条规则', verdict: 'learn' })
+      break
+    case 'add-task': {
+      const text = (a.text ?? '').trim(); if (!text) break
+      insight({ src: '你', text: `交给拾遗一件事：「${text}」`, verdict: 'remember' })
+      parseTask(text).then(j => {
+        const t = {
+          id: uid('c'), source: 'manual', key: 'manual:' + text, conv: '', to: j.to || '', what: j.what || text, todo: j.todo || text, quote: text, request: '',
+          kind: ['reply', 'deliverable', 'action'].includes(j.kind) ? j.kind : 'action',
+          due: j.due || null, dueText: j.dueText || '', draftable: j.draftable === true && j.kind !== 'action',
+          at: new Date().toISOString(), status: 'open', transcript: '',
+        }
+        state.commitments.push(t)
+        insight({ src: '你', text: `记下了：${t.dueText ? t.dueText + ' · ' : ''}${t.todo}`, verdict: 'remember', layer: `L1 ${config.triageModel}` })
+        changed()
+        if (t.draftable) startDraft(t)
+      }).catch(e => insight({ src: '交办', text: e.message, verdict: 'error' }))
+      break
+    }
+    case 'task-done':
+      if (c) markDone(c, '你标记完成了')
       break
     case 'ignore-conv': {
       const conv = a.conv || live.currentConv
@@ -299,7 +339,7 @@ function snapshot() {
     mode, eyes: live.eyes, privateApp, wechat, focus: live.focus, screenAccess: live.screenAccess,
     seeing: Date.now() - live.lastObserveAt < 10_000, currentConv: live.currentConv, ignoreConvs: config.ignoreConvs,
     working: live.working, thinking: live.thinking, lastTool: live.lastTool ?? '', nod: live.nod, nodText: live.nodText,
-    cards: state.cards, rules: state.rules.filter(r => r.enabled !== false), insight: state.insight.slice(-120), seenCount: state.seenCount,
+    cards: state.cards, rules: state.rules, insight: state.insight.slice(-120), seenCount: state.seenCount,
     commitments: state.commitments.slice(-40), wrapUpAt: config.wrapUpAt, home: HOME,
   }
 }

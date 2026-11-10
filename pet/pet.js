@@ -91,7 +91,7 @@ function render() {
     h('button', { onclick: () => { const on = !S.eyes; post({ eyes: on }); act({ type: 'eyes', on }); say(on ? '我睁眼啦，只看微信。' : '好，我闭眼，什么都不看。', 2500, 'quiet') } }, S.eyes ? '闭眼（暂停看）' : '睁眼'),
     canIgnore ? h('button', { onclick: () => { act({ type: 'ignore-conv', conv: S.currentConv }); say(`好，以后不看「${S.currentConv}」，存下的记录也删了。`, 3500, 'quiet') } }, `不看「${short(S.currentConv)}」`) : null,
     h('div', { class: 'sep' }),
-    h('button', { onclick: () => open('today') }, '我答应的事'),
+    h('button', { onclick: () => open('today') }, '在帮你盯的事'),
     h('button', { onclick: () => open('insight') }, '它看到了什么'),
     h('button', { onclick: () => open('book') }, '我的工作方式'),
     h('div', { class: 'sep' }),
@@ -109,7 +109,7 @@ const open = v => { view = view === v ? null : v; render() }
 const short = s => s.length > 8 ? s.slice(0, 8) + '…' : s
 
 function head() {
-  const title = typeof view === 'object' ? view.doc.split('/').pop() : { cards: '找你的事', insight: '它看到了什么', book: '我的工作方式', today: '我答应的事' }[view]
+  const title = typeof view === 'object' ? view.doc.split('/').pop() : { cards: '找你的事', insight: '它看到了什么', book: '我的工作方式', today: '在帮你盯的事' }[view]
   const status = !S.eyes ? '闭眼中' : S.privateApp ? '私密应用在前台，没在看' : S.wechat ? '在看微信' : '没在看（微信不在前台）'
   return h('div', { class: 'head' },
     typeof view === 'object' ? h('button', { class: 'back', onclick: () => { view = 'cards'; render() } }, '‹') : null,
@@ -122,7 +122,7 @@ function body() {
   if (view === 'insight') return insightView()
   if (view === 'book') return bookView()
   if (view === 'today') return todayView()
-  return S.cards.length ? h('div', { class: 'cards' }, S.cards.map(cardView)) : h('div', { class: 'empty' }, '现在没有要找你的事。我在看着微信，你答应别人的事我会记下。')
+  return S.cards.length ? h('div', { class: 'cards' }, S.cards.map(cardView)) : h('div', { class: 'empty' }, '现在没有要找你的事。我在看着微信，你答应别人的事、交给我的事，我都会盯着。')
 }
 
 /* ── 卡片 ── */
@@ -215,23 +215,78 @@ function insightView() {
         h('div', {}, e.text), showTech && e.layer ? h('div', { class: 'cost' }, e.layer + (e.cost ? ' · ' + e.cost : '')) : null)
     })))
 }
+/* 我的工作方式：规则可以改、可以加、停用后可以重新启用 */
 function bookView() {
+  const on = S.rules.filter(r => r.enabled !== false), off = S.rules.filter(r => r.enabled === false)
+  const ruleRow = r => editing?.rule === r.id ? ruleEditor(r) : h('li', { class: r.enabled === false ? 'is-off' : '' },
+    h('b', {}, r.text),
+    h('small', {}, `${r.scope ? '只用在：' + r.scope + ' · ' : '所有场合 · '}${r.learnedFrom === '你手动加的' ? '你手动加的' : '学自 ' + r.learnedFrom}${r.editedAt ? ' · 你改过' : ''}`),
+    h('span', { class: 'row-actions' },
+      h('button', { class: 'link', onclick: () => { editing = { rule: r.id }; render() } }, '改'),
+      r.enabled === false
+        ? [h('button', { class: 'link', onclick: () => act({ type: 'rule-toggle', id: r.id, enabled: true }) }, '重新启用'),
+           h('button', { class: 'link danger', onclick: () => act({ type: 'rule-delete', id: r.id }) }, '删除')]
+        : h('button', { class: 'link', onclick: () => act({ type: 'rule-toggle', id: r.id, enabled: false }) }, '停用')))
   return h('div', { class: 'scroll' },
-    h('p', { class: 'intro' }, '你每次说「改一下」，我都会想想能不能学到点什么；你点了「记住」的才会写进来。起草前我会先读这里，并且只在规则写明的范围里用。'),
-    S.rules.length ? h('ol', { class: 'rules' }, S.rules.map(r => h('li', {}, h('b', {}, r.text), h('small', {}, `${r.scope ? '只用在：' + r.scope + ' · ' : ''}学自 ${r.learnedFrom}`),
-      h('button', { class: 'link', onclick: () => act({ type: 'rule-off', id: r.id }) }, '停用')))) : h('div', { class: 'empty' }, '还没有规则。'),
+    h('p', { class: 'intro' }, '这里是我写东西前会先读的规则：有我从你的「改一下」里学来的，也可以你直接写。改完下次起草就生效。'),
+    editing?.rule === 'new' ? ruleEditor(null) : h('button', { class: 'btn add', onclick: () => { editing = { rule: 'new' }; render() } }, '＋ 加一条规则'),
+    on.length ? h('ol', { class: 'rules' }, on.map(ruleRow)) : editing?.rule === 'new' ? null : h('div', { class: 'empty' }, '还没有规则。你可以直接写一条，比如「给客户的消息都带上称呼」。'),
+    off.length ? h('details', { class: 'off-rules' }, h('summary', {}, `已停用 ${off.length} 条`), h('ol', { class: 'rules' }, off.map(ruleRow))) : null,
     S.ignoreConvs.length ? h('div', { class: 'ignored' }, h('b', {}, '不看的会话'), S.ignoreConvs.map(cv => h('span', { class: 'chip' }, cv, ' ', h('button', { class: 'link', onclick: () => act({ type: 'unignore-conv', conv: cv }) }, '恢复')))) : null,
-    h('p', { class: 'path' }, `原文：${S.home}/workspace/AGENTS.md`))
+    h('p', { class: 'path' }, `规则以这里为准，会同步写进 ${S.home}/workspace/AGENTS.md；直接改那个文件会被覆盖。`))
 }
+
+function ruleEditor(r) {
+  const text = h('textarea', { class: 'reason', placeholder: '规则，用一句话写清楚要怎么做，比如：给客户的消息都带上称呼' })
+  const scope = h('input', { class: 'scope', placeholder: '只用在什么场合（可不填，不填就是所有场合）' })
+  text.value = r?.text ?? ''; scope.value = r?.scope ?? ''
+  setTimeout(() => text.focus(), 30); post({ focus: true })
+  const save = () => {
+    if (!text.value.trim()) return
+    act(r ? { type: 'rule-edit', id: r.id, text: text.value, scope: scope.value } : { type: 'rule-add', text: text.value, scope: scope.value })
+    editing = null
+  }
+  return h('div', { class: 'revise rule-edit' }, text, scope, h('div', { class: 'actions' },
+    h('button', { class: 'btn primary', onclick: save }, r ? '保存' : '加上'),
+    h('button', { class: 'btn', onclick: () => { editing = null; render() } }, '取消')))
+}
+
+/* 在帮你盯的事：以「要做什么」为主，按时间分组；来源只是一个小标签，原话折叠 */
 function todayView() {
-  const list = [...S.commitments].filter(c => c.status !== 'dropped').reverse()
+  const all = S.commitments.filter(c => c.status !== 'dropped')
+  const day = d => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x.getTime() }
+  const today = day(Date.now()), tomorrow = today + 86400_000
+  const groupOf = c => c.status === 'done' ? 'done' : !c.due ? 'none' : day(c.due) <= today ? 'today' : day(c.due) === tomorrow ? 'tomorrow' : 'later'
+  const GROUPS = [['today', '今天'], ['tomorrow', '明天'], ['later', '之后'], ['none', '没定时间'], ['done', '已完成']]
+  const item = c => h('li', { class: c.status === 'done' ? 'is-done' : '' },
+    h('button', { class: 'dot', title: c.status === 'done' ? '已完成' : '标记完成', onclick: () => c.status !== 'done' && act({ type: 'task-done', commitmentId: c.id }) }, c.status === 'done' ? '✓' : ''),
+    h('span', {},
+      h('b', {}, c.todo || c.what),
+      h('small', {}, [c.to && c.source !== 'manual' ? `给${c.to}` : '', c.dueText, STATUS[c.status] + (c.doneAt ? ' ' + c.doneAt : '')].filter(Boolean).join(' · ')),
+      h('details', { class: 'src-detail' },
+        h('summary', {}, h('span', { class: `src-tag ${c.source === 'manual' ? 'manual' : 'wechat'}` }, c.source === 'manual' ? '你交办的' : `微信 · ${short(c.conv)}`)),
+        h('small', { class: 'quote' }, c.source === 'manual' ? `「${c.quote}」` : c.request ? `${c.conv}：「${c.request}」→ 你：「${c.quote}」` : `你：「${c.quote}」`))),
+    ['ready', 'copied'].includes(c.status) ? h('button', { class: 'link', onclick: () => { act({ type: 'open-card', commitmentId: c.id }); view = 'cards' } }, '看草稿') : null)
+  const sections = GROUPS.map(([g, label]) => {
+    const list = all.filter(c => groupOf(c) === g).reverse()
+    if (!list.length) return null
+    const body = h('ul', { class: 'wrap' }, list.map(item))
+    return g === 'done' ? h('details', { class: 'group' }, h('summary', {}, `${label} ${list.length}`), body) : h('section', { class: 'group' }, h('h4', {}, `${label} ${list.length}`), body)
+  }).filter(Boolean)
   return h('div', { class: 'scroll' },
-    list.length ? h('ul', { class: 'wrap' }, list.map(c => h('li', { class: c.status === 'done' ? 'is-done' : '' },
-      h('span', { class: 'dot' }, c.status === 'done' ? '✓' : ''),
-      h('span', {}, h('b', {}, c.todo || `${c.to} · ${c.what}`), h('small', {}, `${c.dueText || '没说时间'} · ${STATUS[c.status]}${c.doneAt ? ' · ' + c.doneAt : ''}`), h('small', { class: 'quote' }, c.request ? `${c.conv}：「${c.request}」→ 你：「${c.quote}」` : `你对${c.conv}说：「${c.quote}」`)),
-      ['ready', 'copied'].includes(c.status) ? h('button', { class: 'link', onclick: () => { act({ type: 'open-card', commitmentId: c.id }); view = 'cards' } }, '看看') : null)))
-      : h('div', { class: 'empty' }, '还没有记下的承诺。在微信里答应别人点什么试试，比如「明天上午发你周报」。'),
+    editing?.task ? taskEditor() : h('button', { class: 'btn add', onclick: () => { editing = { task: true }; render() } }, '＋ 交给拾遗一件事'),
+    sections.length ? sections : h('div', { class: 'empty' }, '还没有在盯的事。你在微信里答应别人什么（比如「明天上午发你周报」），或者直接交给我一件事，都会出现在这里。'),
     h('div', { class: 'actions' }, h('button', { class: 'btn', onclick: () => { act({ type: 'wrapup' }); view = 'cards' } }, '现在收个尾')))
+}
+
+function taskEditor() {
+  const text = h('textarea', { class: 'reason', placeholder: '比如：周五前把 Q4 规划发给王总 / 明早提醒我给妈妈打电话' })
+  setTimeout(() => text.focus(), 30); post({ focus: true })
+  const save = () => { if (!text.value.trim()) return; act({ type: 'add-task', text: text.value }); editing = null; say('收到，我来盯着。', 2500, 'quiet') }
+  text.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) save() })
+  return h('div', { class: 'revise' }, text, h('div', { class: 'actions' },
+    h('button', { class: 'btn primary', onclick: save }, '交给你'),
+    h('button', { class: 'btn', onclick: () => { editing = null; render() } }, '取消')))
 }
 
 function docView(path) {
