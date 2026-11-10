@@ -26,6 +26,14 @@ root.append(panel, h('div', { class: 'dock' }, bubbleEl, petRow))
 
 function say(text, ms = 3500, tone = '') { bubble = { text, until: ms ? Date.now() + ms : Infinity, tone }; render(); if (ms) setTimeout(render, ms + 50) }
 
+/* ── 菜单：鼠标停在桌宠上出现，离开后收起（隐藏时不占点击区域） ── */
+let menuTimer
+if (new URLSearchParams(location.search).get('menu')) menu.classList.add('is-on')   // 调试截图用
+petEl.addEventListener('mouseenter', () => { clearTimeout(menuTimer); if (!drag) { menu.classList.add('is-on'); sizeTo() } })
+petRow.addEventListener('mouseenter', () => clearTimeout(menuTimer))
+petRow.addEventListener('mouseleave', () => { menuTimer = setTimeout(() => { menu.classList.remove('is-on'); sizeTo() }, 400) })
+menu.addEventListener('click', e => { if (e.target.closest('button')) setTimeout(() => { menu.classList.remove('is-on'); sizeTo() }, 150) })
+
 /* ── 拖动桌宠（按住移动超过 4px 才算拖，否则是点击） ── */
 let drag = null
 petEl.addEventListener('mousedown', e => { drag = { x: e.screenX, y: e.screenY, moved: false } })
@@ -33,6 +41,7 @@ addEventListener('mousemove', e => {
   if (!drag) return
   const dx = e.screenX - drag.x, dy = e.screenY - drag.y
   if (!drag.moved && Math.hypot(dx, dy) < 4) return
+  if (!drag.moved) menu.classList.remove('is-on')
   drag.moved = true; drag.x = e.screenX; drag.y = e.screenY
   post({ drag: { dx, dy } })
 })
@@ -76,16 +85,21 @@ function render() {
   bubbleEl.onclick = !S.screenAccess ? () => act({ type: 'open-privacy' }) : () => { view = S.cards.length ? 'cards' : view; render() }
 
   const canIgnore = S.wechat && S.currentConv && !S.ignoreConvs.includes(S.currentConv)
-  menu.replaceChildren(
-    h('button', { onclick: () => { const on = !S.eyes; post({ eyes: on }); act({ type: 'eyes', on }); say(on ? '我睁眼啦，只看微信。' : '好，我闭眼，什么都不看。', 2500, 'quiet') } }, S.eyes ? '闭眼' : '睁眼'),
+  const status = !S.eyes ? '闭眼中' : S.privateApp ? '私密应用在前台' : S.wechat ? (S.currentConv ? `在看：${short(S.currentConv)}` : '在看微信') : '微信不在前台'
+  menu.replaceChildren(...[
+    h('small', {}, status),
+    h('button', { onclick: () => { const on = !S.eyes; post({ eyes: on }); act({ type: 'eyes', on }); say(on ? '我睁眼啦，只看微信。' : '好，我闭眼，什么都不看。', 2500, 'quiet') } }, S.eyes ? '闭眼（暂停看）' : '睁眼'),
     canIgnore ? h('button', { onclick: () => { act({ type: 'ignore-conv', conv: S.currentConv }); say(`好，以后不看「${S.currentConv}」，存下的记录也删了。`, 3500, 'quiet') } }, `不看「${short(S.currentConv)}」`) : null,
+    h('div', { class: 'sep' }),
     h('button', { onclick: () => open('today') }, '我答应的事'),
     h('button', { onclick: () => open('insight') }, '它看到了什么'),
     h('button', { onclick: () => open('book') }, '我的工作方式'),
-    h('button', { class: quitArmed ? 'danger' : 'quiet', onclick: () => {
+    h('div', { class: 'sep' }),
+    h('button', { class: quitArmed ? 'danger' : 'quit', onclick: () => {
       if (!quitArmed) { quitArmed = true; render(); setTimeout(() => { quitArmed = false; render() }, 3000); return }
       act({ type: 'quit' }); post({ quit: true })
-    } }, quitArmed ? '再点一次退出' : '退出'))
+    } }, quitArmed ? '再点一次退出' : '退出拾遗'),
+  ].filter(Boolean))
 
   panel.classList.toggle('is-open', !!view)
   if (view) panel.replaceChildren(head(), body())
@@ -244,14 +258,15 @@ function docView(path) {
 let lastSize = ''
 function sizeTo() {
   const on = bubbleEl.classList.contains('is-on')
-  const w = view ? 440 : on ? 300 : 260
-  const hh = view ? 700 : on ? 210 : 150
+  const m = menu.classList.contains('is-on')
+  const w = view ? 440 : on ? 300 : m ? 280 : 120
+  const hh = view ? 700 : m ? 320 + (on ? 70 : 0) : on ? 210 : 110
   const k = `${w}x${hh}`
   if (k !== lastSize) { lastSize = k; post({ size: { w, h: hh } }) }
   requestAnimationFrame(reportHit)
 }
 function reportHit() {
-  const rects = [petRow, bubbleEl, panel].filter(el => el.offsetParent !== null && el.offsetWidth)
+  const rects = [petEl, menu, bubbleEl, panel].filter(el => el.offsetParent !== null && el.offsetWidth && getComputedStyle(el).display !== 'none')
     .map(el => { const r = el.getBoundingClientRect(); return [r.left, r.top, r.width, r.height] })
   post({ hit: rects })
 }

@@ -43,10 +43,16 @@ button { font: inherit; color: inherit; cursor: pointer; }
 @keyframes nod { 30% { transform: translateY(4px) scale(1.03, .96); } }
 .badge:not(:empty) { position: absolute; top: 2px; right: 4px; min-width: 18px; height: 18px; border-radius: 99px; background: var(--err); color: #fff; font-size: 11px; font-weight: 700; display: grid; place-items: center; padding: 0 5px; }
 
-.menu { display: flex; flex-direction: column; gap: 4px; opacity: 0; transition: opacity .15s; padding-bottom: 6px; }
-.pet-row:hover .menu { opacity: 1; }
-.menu button { border: 1px solid var(--line); background: rgba(255,253,250,.95); border-radius: 99px; padding: 0 10px; font-size: 11.5px; color: var(--ink-2); white-space: nowrap; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
-.menu button.quiet { color: var(--ink-3); }
+
+/* 菜单：鼠标停在桌宠上才出现，像右键菜单一样的实心卡片 */
+.menu { display: none; flex-direction: column; min-width: 148px; padding: 5px; margin-bottom: 8px; background: #fffdfa; border: 1px solid var(--line-2); border-radius: 12px; box-shadow: 0 2px 4px rgba(40,30,20,.10), 0 12px 32px -6px rgba(40,30,20,.35); }
+.menu.is-on { display: flex; animation: in .14s ease-out; }
+.menu button { border: 0; background: none; border-radius: 7px; padding: 6px 10px; text-align: left; font-size: 13px; color: var(--ink); white-space: nowrap; }
+.menu button:hover { background: var(--amber-soft); color: var(--amber-ink); }
+.menu .sep { height: 1px; background: var(--line); margin: 4px 6px; }
+.menu button.quit { color: var(--ink-3); }
+.menu button.danger { background: var(--err); color: #fff; }
+.menu small { display: block; padding: 4px 10px 2px; font-size: 11px; color: var(--ink-3); }
 
 .bubble { max-width: 280px; margin: 0 6px 6px 0; padding: 8px 12px; background: var(--card); border: 1px solid var(--line-2); border-radius: 14px; border-bottom-right-radius: 4px; box-shadow: var(--shadow); font-size: 12.5px; display: none; cursor: pointer; }
 .bubble.is-on { display: block; animation: in .2s ease-out; }
@@ -126,7 +132,6 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .cite-pop { display: block; margin: 4px 0; padding: 6px 8px; background: var(--paper-2); border-radius: 8px; font-size: 11.5px; }
 .cite-pop b { display: block; font: 10.5px var(--mono); color: var(--ink-3); }
 .cite-pop span { display: block; white-space: pre-wrap; } .cite-pop .hl { background: rgba(232,149,74,.22); }
-.menu button.danger { background: var(--err); color: #fff; border-color: var(--err); }
 .hint { font-size: 12px; color: var(--blue); background: var(--blue-soft); border-radius: 8px; padding: 6px 10px; }
 .tech { display: flex; gap: 6px; align-items: center; font-size: 11.5px; color: var(--ink-3); }
 .ignored { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; }
