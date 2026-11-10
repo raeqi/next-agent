@@ -15,5 +15,12 @@
   "dependencies": {
     "@deepseek-ai/dsh-sdk-client": "0.2.2-rc.1",
     "@deepseek-ai/dsh": "0.2.2-rc.1"
+  },
+  "overrides": {
+    "undici": "8.12.2",
+    "fflate": "0.8.3",
+    "@modelcontextprotocol/client": "2.3.0",
+    "zod@^4.0.0": "4.6.7",
+    "zod@^4.1.0": "4.6.7"
   }
 }

@@ -14,7 +14,7 @@ npm run check:model
 npm start
 ```
 
-默认后台端口 18746。npm start 加载 .env 并启动原生透明桌面浮窗，无需浏览器。npm run start:headless 仅启动后台。npm run check:model 使用独立空目录测试模型，不读取桌面软件凭据。运行副本路径以脚本中的 DEST 为准；macOS 屏幕录制和辅助功能必须授权给同一运行副本。不要同时启动多个不同位置的 Shiyi。
+默认后台端口 18746。npm start 加载 .env 并启动原生透明桌面浮窗，无需浏览器。npm run start:headless 仅启动后台。npm run check:model 使用独立空目录测试模型，不读取桌面软件凭据。运行副本默认 ~/Applications/Shiyi.app；源码未变时不重建签名，可通过 SHIYI_NATIVE_APP 指定路径；macOS 屏幕录制和辅助功能必须授权给同一运行副本。不要同时启动多个不同位置的 Shiyi。
 
 ## 应用与权限
 

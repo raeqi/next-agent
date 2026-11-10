@@ -6,7 +6,7 @@
 
 native/Shiyi.swift 的 NSPanel + WKWebView 承载 pet/ 界面。原生端报告前台应用，按白名单截取窗口并进行本机 Vision OCR，POST /focus、/observe 给 daemon/main.mjs。界面订阅 /events SSE，向 /action 提交用户操作。
 
-后台默认开发端口18746。scripts/start-desktop.sh 编译后把运行副本放到本地临时目录，避免同步文件夹的扩展属性破坏签名；SHIYI_NATIVE_APP、SHIYI_NATIVE_BINARY、SHIYI_URL 指定运行副本与连接。数据默认 ~/.shiyi，SHIYI_HOME 可隔离。当前会话运行目录 /tmp/shiyi-desktop-live 为测试环境，不是正式安装方案。
+后台默认开发端口18746。scripts/start-desktop.sh 编译后把运行副本放到固定 ~/Applications/Shiyi.app，仅源码变化时重建，避免同步文件夹的扩展属性破坏签名；SHIYI_NATIVE_APP、SHIYI_NATIVE_BINARY、SHIYI_URL 指定运行副本与连接。数据默认 ~/.shiyi，SHIYI_HOME 可隔离。当前会话运行目录 /tmp/shiyi-desktop-live 为测试环境，不是正式安装方案。
 
 ## 感知与建议
 
@@ -48,4 +48,4 @@ node scripts/actions-test.mjs：隔离模拟桥8项检查，不接触实际应�
 
 项目通过官方 SDK 与固定版本的 npm 运行时依赖启动 Agent，不依赖预安装桌面软件、绝对安装路径或已有登录态。用户 npm ci 后复制 .env.example，填写 SHIYI_API_KEY，运行 npm run check:model 和 npm start。运行时使用独立 SHIYI_HOME/runtime，模型凭据由显式环境变量传入；模型型号可配置，当前供应商固定。源码运行需要 macOS 原生构建环境、Node 24.9+ 和 npm。真实 API 验证需要用户提供 key；模拟测试不能替代该验证。
 
-依赖安装审计：固定版本上游依赖树当前报告 210 项（202 high、8 moderate，包含传递影响），尚未修复；不得将连接测试通过解释为已可无风险正式发布。
+依赖审计修复：通过 overrides 将 undici、fflate、MCP client 和 Zod 的依赖解析到修复版本；锁文件审计为0项漏洞，真实模型连接与工具交付已回归通过。
