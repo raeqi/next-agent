@@ -139,17 +139,22 @@ function body() {
 
 /* ── 卡片 ── */
 function cardView(c) {
-  if (c.kind === 'consent') return h('div', { class: 'card card-consent' },
+  if (c.kind === 'consent') {
+    const nameInput = c.needName ? h('input', { class: 'scope', placeholder: `你在 ${c.app} 里显示的名字（用来认出哪句是你说的）`, onfocus: () => { editing = { consent: c.id }; post({ focus: true }) }, onblur: () => { editing = null } }) : null
+    const yes = () => { act({ type: 'app-consent', app: c.app, choice: 'on', myName: nameInput?.value ?? '' }); editing = null; say(`好，我开始看${c.app}了。`, 2500, 'quiet') }
+    return h('div', { class: 'card card-consent' },
     h('div', { class: 'card-top' }, h('span', { class: 'kind' }, '第一次见到'), h('span', {}, c.at)),
     h('div', { class: 'title' }, c.title),
     h('ul', { class: 'consent' },
       h('li', {}, '只在它在前台时截图，并且只识别聊天文字；识别在你电脑上完成'),
       h('li', {}, '你答应别人的事我会记下、提前起草，发送永远由你来按'),
       h('li', {}, '随时可以在「设置」里关掉，或对某个会话说「不看」')),
+    nameInput,
     h('div', { class: 'actions' },
-      h('button', { class: 'btn primary', onclick: () => { act({ type: 'app-consent', app: c.app, choice: 'on' }); say(`好，我开始看${c.app}了。`, 2500, 'quiet') } }, '看'),
-      h('button', { class: 'btn', onclick: () => act({ type: 'app-consent', app: c.app, choice: 'off' }) }, '不看'),
-      h('button', { class: 'btn', onclick: () => act({ type: 'app-consent', app: c.app, choice: 'later' }) }, '先不说')))
+      h('button', { class: 'btn primary', onclick: yes }, '看'),
+      h('button', { class: 'btn', onclick: () => { editing = null; act({ type: 'app-consent', app: c.app, choice: 'off' }) } }, '不看'),
+      h('button', { class: 'btn', onclick: () => { editing = null; act({ type: 'app-consent', app: c.app, choice: 'later' }) } }, '先不说')))
+  }
   if (c.kind === 'learn') return h('div', { class: 'card card-learn' },
     h('div', { class: 'card-top' }, h('span', { class: 'kind' }, '想记住一条'), h('span', {}, c.at)),
     h('div', { class: 'title' }, c.title),
@@ -174,7 +179,7 @@ function cardView(c) {
     h('div', { class: 'card-top' }, h('span', { class: 'kind' }, kind), h('span', {}, c.at), closeBtn(c)),
     h('div', { class: 'title' }, c.title),
     c.phase === 'confirm' ? h('div', { class: 'msg' }, h('small', {}, '你刚发的'), c.confirmQuote) : h('div', { class: 'why' }, c.why),
-    c.phase === 'copied' ? h('div', { class: 'hint' }, `去和「${c.conv}」的聊天里粘贴发送。发出去我会自动划掉。`) : null,
+    c.phase === 'copied' ? h('div', { class: 'hint' }, c.app ? `去${c.app}里和「${c.conv}」的聊天粘贴发送。发出去我会自动划掉。` : '复制好了，用完点「发了」。') : null,
     c.message && c.phase !== 'confirm' ? h('div', { class: 'msg' }, h('small', {}, '要发的话'), c.message) : null,
     c.phase === 'missing' ? missingView(c.missing) : null,
     c.docs?.length && c.phase !== 'confirm' ? h('div', { class: 'chips' }, c.docs.map(d => h('button', { class: 'chip', onclick: () => { view = { doc: d }; render() } }, '📄 ' + d.split('/').pop()))) : null,
@@ -196,7 +201,7 @@ function actionsFor(c) {
       h('button', { class: 'btn primary', onclick: edit('supply') }, '补上信息'),
       h('button', { class: 'btn', onclick: () => act({ type: 'drop', commitmentId: id }) }, '不用了')]
     default: return [
-      h('button', { class: 'btn primary', onclick: () => { act({ type: 'copy', commitmentId: id }); say(`复制好了，去和「${c.conv}」的聊天里粘贴。`, 3500, 'quiet') } }, '复制并打开微信'),
+      h('button', { class: 'btn primary', onclick: () => { act({ type: 'copy', commitmentId: id }); say(c.app ? `复制好了，去${c.app}里和「${c.conv}」的聊天粘贴。` : '复制好了。', 3500, 'quiet') } }, c.app ? `复制并打开${c.app}` : '复制'),
       h('button', { class: 'btn', onclick: edit('revise') }, '改一下'),
       h('button', { class: 'btn', onclick: () => act({ type: 'drop', commitmentId: id }) }, '不用了')]
   }
@@ -286,7 +291,7 @@ function todayView() {
       h('b', {}, c.todo || c.what),
       h('small', {}, [c.to && c.source !== 'manual' ? `给${c.to}` : '', c.dueText, STATUS[c.status] + (c.doneAt ? ' ' + c.doneAt : '')].filter(Boolean).join(' · ')),
       h('details', { class: 'src-detail' },
-        h('summary', {}, h('span', { class: `src-tag ${c.source === 'manual' ? 'manual' : 'wechat'}` }, c.source === 'manual' ? '你交办的' : `微信 · ${short(c.conv)}`)),
+        h('summary', {}, h('span', { class: `src-tag ${c.source === 'manual' ? 'manual' : 'wechat'}` }, c.source === 'manual' ? '你交办的' : `${c.app || '微信'} · ${short(c.conv)}`)),
         h('small', { class: 'quote' }, c.source === 'manual' ? `「${c.quote}」` : c.request ? `${c.conv}：「${c.request}」→ 你：「${c.quote}」` : `你：「${c.quote}」`))),
     ['ready', 'copied'].includes(c.status) ? h('button', { class: 'link', onclick: () => { act({ type: 'open-card', commitmentId: c.id }); view = 'cards' } }, '看草稿') : null)
   const sections = GROUPS.map(([g, label]) => {
@@ -316,7 +321,7 @@ function settingsView() {
   const st = S.settings
   const set = patch => act({ type: 'settings', patch })
   const row = (label, hint, control) => h('div', { class: 'set-row' }, h('div', {}, h('b', {}, label), hint ? h('small', {}, hint) : null), control)
-  const appRow = a => row(a.name, a.state === 'on' ? '在看：只看聊天文字，在你电脑上识别' : a.state === 'off' ? '你说过不看，不会再问' : '还没问过你，下次打开时会问',
+  const appRow = a => row(a.name, a.state === 'on' ? '在看：只看聊天文字，在你电脑上识别' : a.state === 'off' ? '你说过不看，不会再问' : '还没问过你，第一次打开时会问',
     h('div', { class: 'seg' }, [['on', '看'], ['off', '不看']].map(([v, l]) => h('button', { class: a.state === v ? 'is-on' : '', onclick: () => act({ type: 'app-set', app: a.name, value: v }) }, l))))
   const pauseText = S.paused ? `已暂停到 ${new Date(S.pauseUntil).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : '没暂停'
   const matInput = h('input', { class: 'scope', placeholder: '加一个文件夹，比如 ~/Projects', onfocus: () => { editing = { settings: true } }, onblur: () => { editing = null } })
@@ -329,8 +334,11 @@ function settingsView() {
   } }, '清空聊天记录')
   return h('div', { class: 'scroll settings' },
     h('h4', {}, '能看什么'),
-    h('p', { class: 'intro' }, '拾遗只看你同意过的应用。目前适配了的应用才会问你；没适配的（分不清谁说的）不会去看。'),
-    S.apps.map(appRow),
+    h('p', { class: 'intro' }, '拾遗只看你同意过的应用。下面是已经适配了的聊天应用；没适配的（分不清谁说的）不会去看，也不会问你。'),
+    h('div', { class: 'app-list' }, S.apps.map(appRow)),
+    row('你的名字', 'Slack、Discord、Teams 这类应用靠名字认出哪句是你说的；多个名字用逗号分开',
+      h('input', { class: 'scope name-input', value: st.myNames.join('，'), placeholder: '比如：林夏, Lin Xia', onfocus: () => { editing = { settings: true } },
+        onblur: e => { editing = null; set({ myNames: e.target.value.split(/[,，]/) }) }, onkeydown: e => { if (e.key === 'Enter') e.target.blur() } })),
     S.ignoreConvs.length ? row('不看的会话', '在已允许的应用里也跳过', h('div', { class: 'chips' }, S.ignoreConvs.map(cv => h('span', { class: 'chip' }, cv, ' ', h('button', { class: 'link', onclick: () => act({ type: 'unignore-conv', conv: cv }) }, '恢复'))))) : null,
 
     h('h4', {}, '怎么看'),

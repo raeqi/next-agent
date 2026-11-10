@@ -16,7 +16,7 @@ export function writeHandbook() {
 
 你是「拾遗」，这台 Mac 使用者（下称「用户」）的常驻助手。本文件所在目录是你的工作区（下称「电脑根目录」）：
 
-- \`chat/\`：你从微信里看到的聊天记录（每个会话一份 jsonl；side=me 是用户自己说的，side=other 是对方）。
+- \`chat/\`：你从聊天应用里看到的聊天记录（每个会话一份 jsonl，文件名是「应用-会话」；side=me 是用户自己说的，side=other 是对方）。
 - \`shadow/\`：你唯一可以写入的地方，也是你的工作目录。所有草稿都写在这里，不碰任何原件。
 - 用户的材料目录（只读，可以搜索、阅读）：${config.materials.map(p => '`' + p + '`').join('、')}。
 - 写任何论断都标出处，格式固定为 \`[来源: 路径#L行号]\` 或 \`[来源: 路径#L起-L止]\`，每处单独一个方括号，不要合并、不要省略「来源:」。电脑根目录下的文件用相对路径，材料目录里的文件用绝对路径。没有出处就不要写。
@@ -31,10 +31,11 @@ ${rules.length ? rules.map((r, i) => `${i + 1}. ${r.text}${r.scope ? `（适用�
 }
 writeHandbook()
 
-export function appendTranscript(conv, msgs) {
-  const f = join(WS, 'chat', `微信-${safe(conv)}.jsonl`)
-  appendFileSync(f, msgs.map(m => JSON.stringify({ at: m.at ?? null, side: m.side, text: m.text })).join('\n') + '\n')
-  return `chat/微信-${safe(conv)}.jsonl`
+export const transcriptName = (app, conv) => `${safe(app || '微信')}-${safe(conv)}.jsonl`
+export function appendTranscript(app, conv, msgs) {
+  const name = transcriptName(app, conv)
+  appendFileSync(join(WS, 'chat', name), msgs.map(m => JSON.stringify({ at: m.at ?? null, side: m.side, text: m.text })).join('\n') + '\n')
+  return `chat/${name}`
 }
 export const safe = s => (s || '未知会话').replace(/[\/\\:*?"<>|\s]+/g, '_').slice(0, 40)
 
@@ -71,13 +72,13 @@ let triageSession
 const parseJson = t => { const m = t.match(/\{[\s\S]*\}/); if (!m) throw new Error('模型没有给出 JSON：' + t.slice(0, 80)); return JSON.parse(m[0]) }
 
 /** L1：这句是不是一个要兑现的承诺？request 是对方紧挨着的请求（你只回了「好的」时）。 */
-export async function judgeCommitment({ conv, recent, quote, request }) {
+export async function judgeCommitment({ app = '微信', conv, recent, quote, request }) {
   triageSession ??= `shiyi-triage-${Date.now().toString(36)}`
   live.thinking++; changed()
   try {
     const out = await run('triage', triageSession, [
       '你是「拾遗」的筛选器，只做判断，不调用任何工具。',
-      `现在是 ${new Date().toLocaleString('zh-CN', { hour12: false })}。下面是用户在微信与「${conv}」的最近聊天（me=用户本人，other=对方；如果是群聊，对方消息前可能带人名）：`,
+      `现在是 ${new Date().toLocaleString('zh-CN', { hour12: false })}。下面是用户在${app}与「${conv}」的最近聊天（me=用户本人，other=对方；如果是群聊，对方消息前可能带人名）：`,
       recent.map(m => `${m.side}: ${m.text}`).join('\n'),
       request ? `候选：对方说「${request}」，用户回了「${quote}」。` : `候选句（用户说的）：「${quote}」`,
       '判断用户是否做出了一个需要之后兑现的承诺（答应发文件、给意见、回复、安排某事等）。客套话、当场已经完成的、问句都不算。',
@@ -125,7 +126,7 @@ export async function draft(c, onTool) {
   c.session ??= `shiyi-draft-${c.id}`
   const head = c.source === 'manual'
     ? `用户直接交给你一件事：「${c.quote}」${c.dueText ? `（时间：${c.dueText}）` : ''}。要做的事：${c.what}${c.to ? `，对象：${c.to}` : ''}。`
-    : `用户在微信里${c.request ? `被「${c.to}」问「${c.request}」时回了` : `答应了「${c.to}」`}：「${c.quote}」${c.dueText ? `（时间：${c.dueText}）` : ''}。要兑现的事：${c.what}。聊天记录：${c.transcript}（电脑根目录下）。`
+    : `用户在${c.app || '微信'}里${c.request ? `被「${c.to}」问「${c.request}」时回了` : `答应了「${c.to}」`}：「${c.quote}」${c.dueText ? `（时间：${c.dueText}）` : ''}。要兑现的事：${c.what}。聊天记录：${c.transcript}（电脑根目录下）。`
   const body = c.kind === 'deliverable' ? [
     `用户的材料目录（只读）：${config.materials.join('、')}。先找齐完成这件事需要的材料，然后在当前工作目录（shadow/）下的文件夹 ${c.id}/ 里写：`,
     '1. `<文档名>.md`：要交付的文档，每个论断标出处；材料不够的部分留空并标注；',

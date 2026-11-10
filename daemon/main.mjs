@@ -6,9 +6,9 @@ import { readFileSync, existsSync, statSync, rmSync, readdirSync } from 'node:fs
 import { join, dirname, extname, normalize, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFile, spawn } from 'node:child_process'
-import { state, live, config, saveConfig, SUPPORTED_APPS, appName, watching, paused, rawMaterials, WS, HOME, subscribe, changed, save, insight, card, dropCard, maySpeak, spoke, hm, ymd, uid } from './store.mjs'
-import { parseWeChat, diff, keyOf } from './wechat.mjs'
-import { appendTranscript, judgeCommitment, judgeRule, parseTask, draft, redraft, supply, writeHandbook, shutdownAgents, safe } from './agent.mjs'
+import { state, live, config, saveConfig, APPS, findApp, appName, watching, paused, rawMaterials, WS, HOME, subscribe, changed, save, insight, card, dropCard, maySpeak, spoke, hm, ymd, uid } from './store.mjs'
+import { parseChat, parseBubble, diff, keyOf } from './layout.mjs'
+import { appendTranscript, transcriptName, judgeCommitment, judgeRule, parseTask, draft, redraft, supply, writeHandbook, shutdownAgents, safe } from './agent.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
@@ -24,8 +24,8 @@ const WHEN = /(明天|明早|今晚|今天|待会|等会|一会|回头|晚点|�
 const QUESTION = /[?？吗呢]$/
 
 const recent = {}   // conv → 最近 40 条（重启后从聊天记录文件恢复）
-function loadRecent(conv) {
-  const f = join(WS, 'chat', `微信-${safe(conv)}.jsonl`)
+function loadRecent(app, conv) {
+  const f = join(WS, 'chat', transcriptName(app, conv))
   if (!existsSync(f)) return []
   return readFileSync(f, 'utf8').trim().split('\n').slice(-40).map(l => { try { return JSON.parse(l) } catch { return null } }).filter(Boolean)
 }
@@ -39,22 +39,28 @@ async function onObserve(obs) {
   if (!live.eyes || paused() || config.apps[obs.bundle] !== 'on' || observing) return
   observing = true
   try {
-    const p = parseWeChat(obs, config.wechatListWidth)
+    const app = findApp(obs.bundle, obs.app)
+    if (!app) return
+    const p = parseChat(obs, app, config)
     if (!p.conv) return
+    // 会话身份：微信沿用会话名（兼容旧记录），其他应用加上应用名，避免同名会话串台
+    const id = app.name === '微信' ? p.conv : `${app.name}·${p.conv}`
+    const where = { app: app.name, bundle: obs.bundle, conv: p.conv, id }
     if (live.currentConv !== p.conv) { live.currentConv = p.conv; changed() }
     if (config.ignoreConvs.some(c => p.conv.includes(c))) return
-    const { first, fresh } = diff(state.seen, p.conv, p.messages)
+    const { first, fresh } = diff(state.seen, id, p.messages)
     if (!fresh.length) { save(); return }
     state.seenCount += fresh.length
     const at = new Date().toISOString()
-    const transcript = appendTranscript(p.conv, fresh.map(m => ({ ...m, at: first ? null : at })))
-    const before = recent[p.conv] ?? loadRecent(p.conv)
-    recent[p.conv] = [...before, ...fresh].slice(-40)
+    const transcript = appendTranscript(app.name, p.conv, fresh.map(m => ({ ...m, at: first ? null : at })))
+    where.transcript = transcript
+    const before = recent[id] ?? loadRecent(app.name, p.conv)
+    recent[id] = [...before, ...fresh].slice(-40)
     if (first) {
-      insight({ src: `微信 · ${p.conv}`, text: `第一次看到这个会话，之前的 ${fresh.length} 条消息只用来了解背景`, verdict: 'remember', layer: '本机 OCR' })
+      insight({ src: `${app.name} · ${p.conv}`, text: `第一次看到这个会话，之前的 ${fresh.length} 条消息只用来了解背景`, verdict: 'remember', layer: '本机 OCR' })
       return
     }
-    checkFulfilled(p.conv, fresh)
+    checkFulfilled(id, fresh)
     const ctx = [...before]
     const cands = [], asks = []
     for (const m of fresh) {
@@ -65,46 +71,47 @@ async function onObserve(obs) {
       else if (m.side === 'other' && REQUEST.test(m.text)) asks.push(m)
       ctx.push(m)
     }
-    for (const m of asks) insight({ src: `微信 · ${p.conv}`, text: `对方：「${m.text}」→ 是个请求，先记着，看你怎么回`, verdict: 'remember', layer: 'L0 本机规则', cost: '0 token' })
+    for (const m of asks) insight({ src: `${app.name} · ${p.conv}`, text: `对方：「${m.text}」→ 是个请求，先记着，看你怎么回`, verdict: 'remember', layer: 'L0 本机规则', cost: '0 token' })
     const rest = fresh.length - cands.length - asks.length
-    if (rest > 0) insight({ src: `微信 · ${p.conv}`, text: `${rest} 条新消息，和你要兑现的事无关`, verdict: 'ignore', layer: 'L0 本机规则', cost: '0 token' })
-    for (const c of cands) handleCandidate(p.conv, c.m, transcript, c.request).catch(e => insight({ src: '筛选', text: e.message, verdict: 'error' }))
+    if (rest > 0) insight({ src: `${app.name} · ${p.conv}`, text: `${rest} 条新消息，和你要兑现的事无关`, verdict: 'ignore', layer: 'L0 本机规则', cost: '0 token' })
+    for (const c of cands) handleCandidate(where, c.m, c.request).catch(e => insight({ src: '筛选', text: e.message, verdict: 'error' }))
   } finally { observing = false }
 }
 
-async function handleCandidate(conv, m, transcript, request) {
+async function handleCandidate(where, m, request) {
+  const { app, conv, id, transcript } = where
   const k = keyOf(m) + (request ? '|' + request : '')
-  if (state.commitments.some(c => c.conv === conv && c.key === k)) return
+  if (state.commitments.some(c => (c.convId ?? c.conv) === id && c.key === k)) return
   insight({
-    src: `微信 · ${conv}`, verdict: 'suspect', layer: 'L0 本机规则', cost: '0 token',
+    src: `${app} · ${conv}`, verdict: 'suspect', layer: 'L0 本机规则', cost: '0 token',
     text: request ? `对方问「${request}」，你回「${m.text}」→ 可能答应了什么，再确认一下` : `你说「${m.text}」→ 像是答应了什么${WHEN.test(m.text) ? '，还带了时间' : ''}，再确认一下`,
   })
   const t0 = Date.now()
-  const j = await judgeCommitment({ conv, recent: recent[conv] ?? [m], quote: m.text, request })
+  const j = await judgeCommitment({ app, conv, recent: recent[id] ?? [m], quote: m.text, request })
   const cost = `L1 ${config.triageModel} · ${((Date.now() - t0) / 1000).toFixed(1)}s`
   if (!j.commitment || (j.confidence ?? 0) < 0.6) {
-    insight({ src: `微信 · ${conv}`, text: `不算承诺：${j.why ?? ''}`, verdict: 'ignore', layer: cost })
+    insight({ src: `${app} · ${conv}`, text: `不算承诺：${j.why ?? ''}`, verdict: 'ignore', layer: cost })
     return
   }
   const c = {
-    id: uid('c'), source: 'wechat', key: k, conv, to: j.to || conv, what: j.what || m.text, todo: j.todo || '', quote: m.text, request: request || '',
+    id: uid('c'), source: 'chat', app, bundle: where.bundle, convId: id, key: k, conv, to: j.to || conv, what: j.what || m.text, todo: j.todo || '', quote: m.text, request: request || '',
     kind: ['reply', 'deliverable', 'action'].includes(j.kind) ? j.kind : 'reply',
     due: j.due || null, dueText: j.dueText || '', draftable: j.draftable !== false && j.kind !== 'action',
     at: new Date().toISOString(), status: 'open', transcript,
   }
   state.commitments.push(c)
-  insight({ src: `微信 · ${conv}`, text: `记下了：${c.dueText ? c.dueText + ' · ' : ''}${c.todo || c.to + '·' + c.what}。${j.why ?? ''}`, verdict: 'remember', layer: cost })
+  insight({ src: `${app} · ${conv}`, text: `记下了：${c.dueText ? c.dueText + ' · ' : ''}${c.todo || c.to + '·' + c.what}。${j.why ?? ''}`, verdict: 'remember', layer: cost })
   live.nod++; live.nodText = `记下了：${c.dueText}${c.todo || `给${c.to}${c.what}`}`
   changed()
   if (c.draftable) startDraft(c)
 }
 
 /** 复制过的承诺：你在这个会话里发出了和草稿相近的话 → 划掉；发了别的话 → 问一句「这条就是吗」。 */
-function checkFulfilled(conv, fresh) {
+function checkFulfilled(convId, fresh) {
   const norm = s => s.replace(/[\s，,。.！!？?…]/g, '')
   const mine = fresh.filter(m => m.side === 'me')
   if (!mine.length) return
-  for (const c of state.commitments.filter(c => c.conv === conv && ['ready', 'copied'].includes(c.status) && c.draft?.message)) {
+  for (const c of state.commitments.filter(c => (c.convId ?? c.conv) === convId && ['ready', 'copied'].includes(c.status) && c.draft?.message)) {
     const head = norm(c.draft.message).slice(0, 10)
     if (head.length >= 6 && mine.some(m => norm(m.text).includes(head))) {
       markDone(c, '看到你发出去了')
@@ -118,7 +125,7 @@ function checkFulfilled(conv, fresh) {
 function markDone(c, how) {
   c.status = 'done'; c.doneAt = hm(); c.confirmQuote = ''
   dropCard('c:' + c.id)
-  insight({ src: c.source === 'manual' ? '你交办的' : `微信 · ${c.conv}`, text: `${how}：${c.todo || c.what} ✓`, verdict: 'done' })
+  insight({ src: c.source === 'manual' ? '你交办的' : `${c.app || '微信'} · ${c.conv}`, text: `${how}：${c.todo || c.what} ✓`, verdict: 'done' })
 }
 
 /* ═════════════ 起草 → 开口 ═════════════ */
@@ -162,12 +169,13 @@ function speakAt(c) {
 function commitmentCard(c) {
   const d = c.draft ?? {}
   const waiting = d.missing && !d.message
-  const said = c.source === 'manual' ? `你交给我的：「${c.quote}」` : c.request ? `${c.conv}问「${c.request}」，你回「${c.quote}」` : `你在和${c.conv}聊天时说「${c.quote}」`
+  const place = c.app && c.app !== '微信' ? `${c.app} 的${c.conv}` : c.conv
+  const said = c.source === 'manual' ? `你交给我的：「${c.quote}」` : c.request ? `${place}里问「${c.request}」，你回「${c.quote}」` : `你在和${place}聊天时说「${c.quote}」`
   const whose = c.source === 'manual' ? '你交给我的' : `你答应${c.to}的`
   card({
-    id: 'c:' + c.id, kind: 'commitment', commitmentId: c.id, conv: c.conv,
+    id: 'c:' + c.id, kind: 'commitment', commitmentId: c.id, conv: c.conv, app: c.app || (c.source === 'manual' ? '' : '微信'),
     phase: c.confirmQuote ? 'confirm' : c.status === 'copied' ? 'copied' : waiting ? 'missing' : 'ready',
-    title: c.confirmQuote ? `你在和${c.conv}的聊天里发了一条消息，这就是「${c.what}」吗？`
+    title: c.confirmQuote ? `你在和${place}的聊天里发了一条消息，这就是「${c.what}」吗？`
       : waiting ? `${whose}「${c.what}」，还差一点信息` : `${whose}「${c.what}」，我起草好了`,
     why: `${c.dueText ? c.dueText + '要交。' : ''}${said}`,
     message: d.message, docs: d.docs, missing: d.missing, confirmQuote: c.confirmQuote,
@@ -202,16 +210,23 @@ function wrapCard() {
 /* ═════════════ 白名单：第一次打开支持的应用时问一次 ═════════════ */
 
 const askedLater = new Set()   // 本次运行里你点了「先不说」的应用
-const bundlesOf = name => Object.keys(SUPPORTED_APPS).filter(b => SUPPORTED_APPS[b].name === name)
+const seenBundles = {}   // 应用名 → 你实际打开时的 bundle id（registry 里没列到的版本也能进白名单）
+const bundlesOf = name => [...new Set([...(APPS.find(a => a.name === name)?.bundles ?? []), ...(seenBundles[name] ?? []), ...Object.keys(config.apps).filter(b => findApp(b)?.name === name || config.appNames?.[b] === name)])]
 function setApp(name, value) {
-  const apps = { ...config.apps }
-  for (const b of bundlesOf(name)) { if (value) apps[b] = value; else delete apps[b] }
-  saveConfig({ apps })
+  const apps = { ...config.apps }, appNames = { ...(config.appNames ?? {}) }
+  for (const b of bundlesOf(name)) { if (value) { apps[b] = value; appNames[b] = name } else { delete apps[b]; delete appNames[b] } }
+  saveConfig({ apps, appNames })
 }
-function maybeAskConsent(bundle) {
-  const app = SUPPORTED_APPS[bundle]
-  if (!app || config.apps[bundle] || askedLater.has(app.name) || state.cards.some(c => c.id === 'consent:' + app.name)) return
-  card({ id: 'consent:' + app.name, kind: 'consent', app: app.name, title: `要我看「${app.name}」吗？` })
+function maybeAskConsent(bundle, focusName) {
+  const app = findApp(bundle, focusName)
+  if (!app) return
+  ;(seenBundles[app.name] ??= new Set()).add(bundle)
+  if (config.apps[bundle]) return
+  // 同一个应用的另一个版本你已经决定过（比如国际版 / 国内版）：沿用决定，不再问
+  const decided = bundlesOf(app.name).map(b => config.apps[b]).find(Boolean)
+  if (decided) { setApp(app.name, decided); return }
+  if (askedLater.has(app.name) || state.cards.some(c => c.id === 'consent:' + app.name)) return
+  card({ id: 'consent:' + app.name, kind: 'consent', app: app.name, family: app.family, needName: app.family === 'named' && !config.myNames.length, title: `要我看「${app.name}」吗？` })
   insight({ src: '桌宠', text: `第一次看到你打开${app.name}，问你要不要看`, verdict: 'speak' })
 }
 
@@ -241,10 +256,10 @@ async function onAction(a) {
     case 'copy': {
       if (!c?.draft?.message) break
       await sh('pbcopy', [], c.draft.message)
-      if (c.source !== 'manual') await sh('open', ['-b', 'com.tencent.xinWeChat'])
+      if (c.source !== 'manual') await sh('open', ['-b', c.bundle || 'com.tencent.xinWeChat'])
       if (c.draft.docs?.[0]) await sh('open', ['-R', join(WS, c.draft.docs[0])])
       c.status = 'copied'; c.confirmQuote = ''; commitmentCard(c)
-      insight({ src: '你', text: `复制了给${c.to}的消息，打开了微信${c.draft.docs?.[0] ? '，文档在访达里选中了' : ''}`, verdict: 'done', layer: '对外发送：最后一下由你按' })
+      insight({ src: '你', text: `复制了给${c.to}的消息${c.source !== 'manual' ? `，打开了${c.app || '微信'}` : ''}${c.draft.docs?.[0] ? '，文档在访达里选中了' : ''}`, verdict: 'done', layer: '对外发送：最后一下由你按' })
       break
     }
     case 'sent':
@@ -331,7 +346,8 @@ async function onAction(a) {
       if (!conv || config.ignoreConvs.includes(conv)) break
       saveConfig({ ignoreConvs: [...config.ignoreConvs, conv] })
       delete state.seen[conv]; delete recent[conv]
-      rmSync(join(WS, 'chat', `微信-${safe(conv)}.jsonl`), { force: true })
+      for (const f of readdirSync(join(WS, 'chat'))) if (f.endsWith(`-${safe(conv)}.jsonl`)) rmSync(join(WS, 'chat', f), { force: true })
+      for (const k of Object.keys(state.seen)) if (k === conv || k.endsWith('·' + conv)) delete state.seen[k]
       insight({ src: '你', text: `以后不看「${conv}」，已存下的聊天记录删掉了`, verdict: 'private' })
       break
     }
@@ -342,6 +358,7 @@ async function onAction(a) {
     case 'app-consent': {
       dropCard('consent:' + a.app)
       if (a.choice === 'later') { askedLater.add(a.app); break }
+      if (a.myName?.trim()) saveConfig({ myNames: [...new Set([...config.myNames, a.myName.trim()])] })
       setApp(a.app, a.choice === 'on' ? 'on' : 'off')
       insight({ src: '你', text: a.choice === 'on' ? `同意拾遗看${a.app}` : `不让拾遗看${a.app}，以后不再问`, verdict: a.choice === 'on' ? 'remember' : 'private' })
       break
@@ -356,8 +373,9 @@ async function onAction(a) {
       for (const k of ['morningAt', 'wrapUpAt']) if (/^\d{2}:\d{2}$/.test(p[k] ?? '')) patch[k] = p[k]
       if (p.speakBudgetPerHour != null) patch.speakBudgetPerHour = Math.min(30, Math.max(1, Math.round(Number(p.speakBudgetPerHour) || 6)))
       if (Array.isArray(p.materials)) patch.materials = p.materials.map(x => String(x).trim()).filter(Boolean)
+      if (Array.isArray(p.myNames)) patch.myNames = p.myNames.map(x => String(x).trim()).filter(Boolean)
       saveConfig(patch)
-      insight({ src: '设置', text: `改了：${Object.keys(patch).map(k => ({ captureIntervalSec: '截图间隔', morningAt: '早上开口时间', wrapUpAt: '下班收尾时间', speakBudgetPerHour: '每小时最多开口', materials: '材料文件夹' })[k]).join('、')}`, verdict: 'remember' })
+      insight({ src: '设置', text: `改了：${Object.keys(patch).map(k => ({ captureIntervalSec: '截图间隔', morningAt: '早上开口时间', wrapUpAt: '下班收尾时间', speakBudgetPerHour: '每小时最多开口', materials: '材料文件夹', myNames: '你的名字' })[k]).join('、')}`, verdict: 'remember' })
       break
     }
     case 'pause': {
@@ -390,13 +408,13 @@ function snapshot() {
   const isPaused = paused()
   const watchingNow = on.includes(live.focus.bundle)
   const mode = !live.eyes || isPaused ? 'closed' : live.working ? 'work' : live.thinking ? 'think' : state.cards.length ? 'call' : watchingNow ? 'watch' : 'idle'
-  const names = [...new Set(Object.values(SUPPORTED_APPS).map(a => a.name))]
+
   return {
     mode, eyes: live.eyes, paused: isPaused, pauseUntil: config.pauseUntil, wechat: watchingNow, watchingApp: watchingNow ? appName(live.focus.bundle) : '',
     focus: live.focus, screenAccess: live.screenAccess,
     watch: { bundles: on, interval: config.captureIntervalSec, paused: isPaused || !live.eyes },
-    apps: names.map(n => { const v = bundlesOf(n).map(b => config.apps[b]); return { name: n, state: v.includes('on') ? 'on' : v.includes('off') ? 'off' : 'unasked' } }),
-    settings: { captureIntervalSec: config.captureIntervalSec, morningAt: config.morningAt, wrapUpAt: config.wrapUpAt, speakBudgetPerHour: config.speakBudgetPerHour, materials: rawMaterials() },
+    apps: APPS.map(a => { const v = bundlesOf(a.name).map(b => config.apps[b]); return { name: a.name, family: a.family, state: v.includes('on') ? 'on' : v.includes('off') ? 'off' : 'unasked' } }),
+    settings: { myNames: config.myNames, captureIntervalSec: config.captureIntervalSec, morningAt: config.morningAt, wrapUpAt: config.wrapUpAt, speakBudgetPerHour: config.speakBudgetPerHour, materials: rawMaterials() },
     seeing: Date.now() - live.lastObserveAt < 10_000, currentConv: live.currentConv, ignoreConvs: config.ignoreConvs,
     working: live.working, thinking: live.thinking, lastTool: live.lastTool ?? '', nod: live.nod, nodText: live.nodText,
     cards: state.cards, rules: state.rules, insight: state.insight.slice(-120), seenCount: state.seenCount,
@@ -417,7 +435,7 @@ const server = createServer(async (req, res) => {
     if (req.method === 'POST' && p === '/observe') { onObserve(await body(req)); return res.end('ok') }
     if (req.method === 'POST' && p === '/focus') {
       const b = await body(req); live.focus = { bundle: b.bundle, name: b.name }; live.screenAccess = b.screenAccess !== false
-      if (live.eyes && !paused()) maybeAskConsent(b.bundle)
+      if (live.eyes && !paused()) maybeAskConsent(b.bundle, b.name)
       changed(); return res.end('ok')
     }
     if (req.method === 'POST' && p === '/action') { await onAction(await body(req)); return res.end('ok') }
@@ -432,7 +450,7 @@ const server = createServer(async (req, res) => {
     }
     if (p === '/debug/last') {
       if (!lastObs) return res.end('{}')
-      const parsed = parseWeChat(lastObs, config.wechatListWidth)
+      const parsed = parseChat(lastObs, findApp(lastObs.bundle, lastObs.app), config)
       return res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' }).end(JSON.stringify({ window: lastObs.window, parsed, lines: lastObs.lines.map(l => ({ t: l.text, x: +(l.x * lastObs.window.w).toFixed(0), y: +(l.y * lastObs.window.h).toFixed(0), w: +(l.w * lastObs.window.w).toFixed(0), h: +(l.h * lastObs.window.h).toFixed(0), c: +l.conf.toFixed(2) })) }, null, 1))
     }
     if (p === '/file') {

@@ -176,3 +176,5 @@ button.dot:hover { background: var(--amber-soft); }
 .mats .link { margin: 0; font-size: 11px; }
 .mat-add { display: flex; gap: 6px; width: 100%; }
 .mat-add input { flex: 1; }
+.app-list { flex: none; display: flex; flex-direction: column; gap: 6px; max-height: 300px; overflow: auto; }
+.name-input { width: 150px; flex: none; }
