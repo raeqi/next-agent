@@ -24,6 +24,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     var eyesOn = true
     var busy = false
     var size = NSSize(width: 300, height: 210)
+    var hitRects: [NSRect] = []          // 网页里可点的区域（左上角原点）；其余透明处点击穿透
+    var dragging = false
+    var hover: Timer?
 
     func applicationDidFinishLaunching(_ n: Notification) {
         let cfg = WKWebViewConfiguration()
@@ -50,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             name: NSWorkspace.didActivateApplicationNotification, object: nil)
         if !CGPreflightScreenCaptureAccess() { CGRequestScreenCaptureAccess() }
         timer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in self?.tick() }
+        hover = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in self?.updatePassThrough() }
         reportFocus(NSWorkspace.shared.frontmostApplication)
     }
 
@@ -60,16 +64,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     func webView(_ w: WKWebView, didFailProvisionalNavigation n: WKNavigation!, withError e: Error) { retry() }
     func retry() { DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.loadPet() } }
 
-    /// 右下角，避开 Dock。
+    /// 以右下角为锚点放置窗口（窗口变大变小时桌宠不动）；锚点可拖动并记住。
     func place() {
         guard let screen = NSScreen.main else { return }
         let v = screen.visibleFrame
-        panel.setFrame(NSRect(x: v.maxX - size.width - 12, y: v.minY + 8, width: size.width, height: size.height), display: true)
+        let d = UserDefaults.standard
+        var right = d.object(forKey: "anchorRight") as? Double ?? Double(v.maxX - 12)
+        var bottom = d.object(forKey: "anchorBottom") as? Double ?? Double(v.minY + 8)
+        right = min(max(right, Double(v.minX) + Double(size.width)), Double(v.maxX))
+        bottom = min(max(bottom, Double(v.minY)), Double(v.maxY) - Double(size.height))
+        panel.setFrame(NSRect(x: right - Double(size.width), y: bottom, width: size.width, height: size.height), display: true)
     }
 
-    // 网页 → 原生：{size:{w,h}} 调整窗口；{eyes:true/false}；{quit:true}
+    /// 鼠标不在桌宠/气泡/面板上时，让点击穿透到下面的应用（比如微信的「发送」按钮）。
+    func updatePassThrough() {
+        if dragging { panel.ignoresMouseEvents = false; return }
+        let m = NSEvent.mouseLocation, f = panel.frame
+        let p = NSPoint(x: m.x - f.minX, y: f.maxY - m.y)
+        panel.ignoresMouseEvents = !hitRects.contains { $0.insetBy(dx: -2, dy: -2).contains(p) }
+    }
+
+    // 网页 → 原生：{size:{w,h}} 调整窗口；{hit:[[x,y,w,h]]} 可点区域；{drag:{dx,dy}} / {dragEnd} 拖动；{eyes}；{focus}；{quit}
     func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage) {
         guard let body = m.body as? [String: Any] else { return }
+        if let rs = body["hit"] as? [[Double]] {
+            hitRects = rs.filter { $0.count == 4 }.map { NSRect(x: $0[0], y: $0[1], width: $0[2], height: $0[3]) }
+        }
+        if let d = body["drag"] as? [String: Any], let dx = d["dx"] as? Double, let dy = d["dy"] as? Double {
+            dragging = true
+            var f = panel.frame
+            f.origin.x += dx; f.origin.y -= dy
+            panel.setFrame(f, display: true)
+        }
+        if body["dragEnd"] as? Bool == true {
+            dragging = false
+            UserDefaults.standard.set(Double(panel.frame.maxX), forKey: "anchorRight")
+            UserDefaults.standard.set(Double(panel.frame.minY), forKey: "anchorBottom")
+        }
         if let s = body["size"] as? [String: Any], let w = s["w"] as? Double, let h = s["h"] as? Double {
             size = NSSize(width: w, height: h); place()
         }

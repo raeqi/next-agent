@@ -27,8 +27,13 @@ const DEFAULT_CONFIG = {
 
 const CONFIG_PATH = join(HOME, 'config.json')
 if (!existsSync(CONFIG_PATH)) writeFileSync(CONFIG_PATH, JSON.stringify(DEFAULT_CONFIG, null, 2))
-export const config = { ...DEFAULT_CONFIG, ...JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) }
-config.materials = config.materials.map(p => p.replace(/^~/, homedir()))
+const rawConfig = { ...DEFAULT_CONFIG, ...JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) }
+export const config = { ...rawConfig, materials: rawConfig.materials.map(p => p.replace(/^~/, homedir())) }
+/** 写回 config.json（只写用户可改的那几项，保留 ~ 写法）。 */
+export function saveConfig(patch) {
+  Object.assign(rawConfig, patch); Object.assign(config, patch)
+  writeFileSync(CONFIG_PATH, JSON.stringify(rawConfig, null, 2))
+}
 
 const STATE_PATH = join(HOME, 'state.json')
 const EMPTY = {
@@ -37,13 +42,14 @@ const EMPTY = {
   rules: [],         // {id, text, learnedFrom, at, enabled}
   insight: [],       // {at, src, text, verdict, layer?, cost?}
   seen: {},          // conv → [规范化消息 key]
+  seenCount: 0,      // 看到过的新消息总数
   spokenAt: [],      // 主动开口时间戳（打扰预算）
   lastWrapUp: '', lastMorning: '',
 }
 export const state = existsSync(STATE_PATH) ? { ...EMPTY, ...JSON.parse(readFileSync(STATE_PATH, 'utf8')) } : structuredClone(EMPTY)
 
 // 运行时（不持久）
-export const live = { eyes: true, focus: { bundle: '', name: '' }, screenAccess: true, working: 0, thinking: 0, lastObserveAt: 0, nod: 0, nodText: '' }
+export const live = { eyes: true, focus: { bundle: '', name: '' }, screenAccess: true, working: 0, thinking: 0, lastObserveAt: 0, nod: 0, nodText: '', currentConv: '' }
 
 let saveTimer
 export function save() {
