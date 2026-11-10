@@ -22,11 +22,11 @@ npm start
 - 未允许的应用不读取页面。系统和敏感应用排除，闭眼或暂停会停止观察与执行。
 - 观察权限不包含操作权限。操作分为关闭、单步确认、指定具名文本控件自动填写。
 - 执行前复查页面快照；页面变化则拒绝旧计划。填写后重新读取文本值核对，点击结果保留为未验证，不宣称完成。
-- 页面文字会交给 模型判断；OCR 在本机执行。材料目录用于只读查找，结果写入 shadow/。
+- 页面文字会交给模型判断；OCR 在本机执行。材料目录用于只读查找，结果写入 shadow/。
 
 ## 当前能力与边界
 
-通用页面变化建议、手动交办与页面快照、结果准备、单步 AX 操作规划与执行、操作日志。聊天承诺追踪是可选的增强解析能力，不是通用应用的准入条件。
+通用页面变化建议、直接委派任务、材料读取与分析、工具计算、结果文件交付，以及按独立权限规划单步界面操作。建议按分析、后台任务、界面操作分配入口；过期建议需重新检查，已完成任务提供结果入口。
 
 当前不是视觉全能操作器：主要理解 OCR 文字，AX 控件支持 setValue / press；没有通用多步任务循环。自动填写和原生完整链路仍需系统权限后的真实控件测试。真实模型的建议判断和单步规划已独立测试通过。
 
@@ -37,13 +37,23 @@ npm start
 - daemon/main.mjs：授权、页面变化、建议、任务和 HTTP/SSE。
 - daemon/actions.mjs：操作权限、快照检查、执行与验证。
 - daemon/agent.mjs、bridge/harness.mjs：真实模型与 Harness 接线。
-- daemon/layout.mjs：仅用于已适配聊天应用的增强解析。
+- daemon/layout.mjs：特定应用的版式增强解析，不限制通用页面观察。
 - pet/：原生浮窗内的界面。
 - desktop/、workspace-seed/：历史「林夏的一天」剧本演示，不代表真实后台能力。
-- scripts/sim-chat.mjs、sim-wechat.mjs：聊天专项测试工具。
+- scripts/：启动、模型连接检查与专项回归测试。
 
-PRD 与架构位于 docs/proactive-agent/；其中早期微信 M2 和剧本场景为历史阶段设计，当前行为以实际实现及上述边界为准。
+当前产品需求与架构见 [PRD](docs/proactive-agent/PRD.md) 和 [架构说明](docs/proactive-agent/ARCHITECTURE.md)。archive/ 保存历史设计，当前能力以现行文档和测试记录为准。
 
 ## 可复现运行依赖
 
 官方 SDK 和匹配运行时由 package.json 固定版本，package-lock.json 固定依赖树。运行时是安装依赖，不需要把上游源码复制进仓库。凭据由 .env 的 SHIYI_API_KEY 提供；轻量与主模型可通过 SHIYI_TRIAGE_MODEL / SHIYI_DRAFT_MODEL 设置。目前只配置默认官方供应商，尚不提供任意网关切换。运行时配置独立保存在 SHIYI_HOME/runtime，默认 ~/.shiyi/runtime，不沿用桌面版配置。请勿提交 .env。首次安装需要网络；运行时部分功能还可能需要 pnpm。
+
+## 验证
+
+```sh
+npm test
+node scripts/action-policy-test.mjs
+npm run check:model
+```
+
+前两项验证宿主权限和任务按钮策略，不代表真实桌面操作通过。模型连接检查需要有效 key。依赖修复后审计为0项漏洞，真实工具任务交付已验证；原生辅助功能授权与完整桌面操作仍待解决。

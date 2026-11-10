@@ -7,6 +7,7 @@ import { join, dirname, extname, normalize, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFile, spawn } from 'node:child_process'
 import { state, live, config, saveConfig, APPS, findApp, appName, watching, paused, rawMaterials, WS, HOME, subscribe, changed, save, insight, card, dropCard, maySpeak, spoke, hm, ymd, uid } from './store.mjs'
+import { opportunityMode } from '../pet/action-policy.mjs'
 import { inspect, digest, executePlan } from './actions.mjs'
 import { appInfo, NEVER, ocrText, fingerprint } from './perceive.mjs'
 import { parseChat, parseBubble, diff, keyOf } from './layout.mjs'
@@ -107,6 +108,8 @@ async function observePage(obs) {
   state.observedChanges = (state.observedChanges ?? 0) + 1
   const page = { hash, text, at: Date.now(), app: app.name, contextFile }
   pages.set(obs.bundle, page)
+  for (const cd of state.cards.filter(c => c.kind === 'opportunity' && c.bundle === obs.bundle && c.hash && c.hash !== hash)) { cd.stale = true; cd.plan = null }
+  changed()
   if (!previous) return // 第一次只建立基线
   if (previous.checkedAt && Date.now() - previous.checkedAt < 15000) { page.checkedAt = previous.checkedAt; return }
   page.checkedAt = Date.now()
@@ -117,9 +120,9 @@ async function observePage(obs) {
     if (o.confidence < 0.8 || !maySpeak()) continue
     if (app.kind === 'chat' && o.type === 'commitment') continue
     spoke()
-    const suggestion = { id: uid('op'), kind: 'opportunity', bundle: obs.bundle, app: app.name, title: o.todo || o.what, why: o.why, quote: o.quote, context: text.slice(0, 6000), hash, status: 'suggested' }
+    const suggestion = { id: uid('op'), kind: 'opportunity', bundle: obs.bundle, app: app.name, title: o.todo || o.what, why: o.why, quote: o.quote, context: text.slice(0, 6000), hash, actionMode: o.actionMode, opportunityType: o.type, status: 'suggested' }
     card(suggestion)
-    if (config.operations?.[obs.bundle] === 'auto' && config.autoTargets?.[obs.bundle]?.length) {
+    if (opportunityMode(suggestion) === 'ui' && config.operations?.[obs.bundle] === 'auto' && config.autoTargets?.[obs.bundle]?.length) {
       try {
         const page = await inspect(obs.bundle)
         const plan = await planAction({ goal: suggestion.title, page })
@@ -320,9 +323,26 @@ async function onAction(a) {
       const autoTargets = { ...(config.autoTargets ?? {}), [bundle]: String(a.targets ?? '').split('、').map(s => s.trim()).filter(Boolean) }
       saveConfig({ operations, autoTargets }); break
     }
+    case 'refresh-opportunity': {
+      const cd = state.cards.find(x => x.id === a.cardId && x.kind === 'opportunity')
+      const page = cd && pages.get(cd.bundle)
+      if (!page || config.apps[cd.bundle] !== 'on' || !live.eyes || paused()) throw new Error('请先打开并允许观察来源应用')
+      const found = await judgeOpportunity({ app: cd.app, kind: appInfo(cd.bundle).kind, title: cd.app, text: page.text })
+      dropCard(cd.id)
+      for (const o of found.filter(o => o.confidence >= 0.8).slice(0, 2)) card({ id: uid('op'), kind: 'opportunity', bundle: cd.bundle, app: cd.app, title: o.todo || o.what, why: o.why, quote: o.quote, context: page.text, hash: page.hash, actionMode: o.actionMode, opportunityType: o.type, status: 'suggested' })
+      break
+    }
+    case 'delegate-opportunity': {
+      const cd = state.cards.find(x => x.id === a.cardId && x.kind === 'opportunity')
+      if (!cd || cd.stale || cd.status === 'delegated' || opportunityMode(cd) !== 'task') throw new Error('建议已变化或不适合后台执行，请重新检查')
+      if (config.apps[cd.bundle] !== 'on' || !live.eyes || paused()) throw new Error('观察权限已撤销或暂停')
+      const path = join(WS, 'context', cd.id + '.txt'); writeFileSync(path, cd.context)
+      const t = { id: uid('c'), source: 'manual', what: cd.title, todo: cd.title, quote: cd.title, contextFiles: [path], at: new Date().toISOString(), status: 'queued' }
+      state.commitments.push(t); cd.status = 'delegated'; cd.commitmentId = t.id; changed(); startTask(t); break
+    }
     case 'plan-page': {
       const cd = state.cards.find(x => x.id === a.cardId && x.kind === 'opportunity')
-      if (!cd || config.apps[cd.bundle] !== 'on') break
+      if (!cd || cd.stale || opportunityMode(cd) !== 'ui' || config.apps[cd.bundle] !== 'on') throw new Error('请先重新检查建议或确认操作类型')
       const page = await inspect(cd.bundle)
       const plan = await planAction({ goal: cd.title, page })
       if (!plan.step) { cd.executionMessage = plan.why; break }
@@ -332,12 +352,12 @@ async function onAction(a) {
     }
     case 'execute-page': {
       const cd = state.cards.find(x => x.id === a.cardId && x.kind === 'opportunity')
-      if (cd) await executePlan(cd)
+      if (cd && !cd.stale) await executePlan(cd)
       break
     }
     case 'review-page': {
       const cd = state.cards.find(x => x.id === a.cardId && x.kind === 'opportunity')
-      if (!cd || cd.status === 'working' || config.apps[cd.bundle] !== 'on' || !live.eyes || paused()) break
+      if (!cd || cd.stale || opportunityMode(cd) !== 'analysis' || cd.status === 'working' || config.apps[cd.bundle] !== 'on' || !live.eyes || paused()) break
       cd.status = 'working'; cd.startedAt = Date.now(); cd.error = ''; cd.progress = '等待模型执行，最长三分钟'; changed()
       const dir = join(WS, 'context'); mkdirSync(dir, { recursive: true })
       const path = join(dir, cd.id + '.txt'); writeFileSync(path, cd.context)
@@ -517,7 +537,7 @@ function snapshot() {
 
 /* ═════════════ HTTP ═════════════ */
 
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' }
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' }
 const body = req => new Promise(res => { let s = ''; req.on('data', d => s += d); req.on('end', () => { try { res(JSON.parse(s || '{}')) } catch { res({}) } }) })
 const readable = p => { const f = resolve(p.startsWith('/') ? p : join(WS, p)); return [WS, ...config.materials].some(r => f.startsWith(r + '/')) ? f : null }
 
@@ -568,6 +588,7 @@ server.listen(PORT, '127.0.0.1', () => {
     else console.log('（还没构建桌宠：sh scripts/build-native.sh）')
   }
   for (const c of state.cards.filter(c => c.kind === 'opportunity' && c.status === 'working')) { c.status = 'failed'; c.error = '上次处理被后台重启中断，请重试'; changed() }
+  for (const cd of state.cards.filter(c => c.kind === 'opportunity' && c.status !== 'delegated' && !c.result)) cd.stale = true
   // 上次退出时还在起草的，接着起草
   for (const c of state.commitments.filter(c => c.status === 'running')) { c.status = 'blocked'; c.progress = '后台曾中断，请重试任务'; changed() }
   for (const c of state.commitments.filter(c => c.status === 'drafting')) { c.status = 'open'; if (c.draftable) startDraft(c) }

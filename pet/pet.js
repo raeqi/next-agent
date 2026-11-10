@@ -1,5 +1,6 @@
 // 桌宠页面：跑在 拾遗.app 的透明置顶窗口里（也可以直接用浏览器打开调试）。
 // 数据全部来自 daemon 的 /events 快照；操作发 /action。
+import { opportunityActions, isComplete } from './action-policy.mjs'
 import { h, mdBlocks, renderBlocks } from '/lib/util.js'
 
 const native = window.webkit?.messageHandlers?.shiyi
@@ -150,9 +151,18 @@ function cardView(c) {
     c.error ? h('p', {}, c.error) : null,
     c.status === 'working' ? h('p', {}, c.progress || '等待模型处理') : null,
     h('div', { class: 'actions' },
-      h('button', { class: 'btn primary', disabled: c.status === 'working', onclick: () => act({ type: 'review-page', cardId: c.id }) }, c.status === 'working' ? '处理中…' : c.status === 'failed' ? '重试' : '帮我准备'),
-      h('button', { class: 'btn', onclick: () => act({ type: 'plan-page', cardId: c.id }) }, '规划操作'),
-      c.plan ? h('div', {}, h('pre', {}, JSON.stringify(c.plan.step, null, 2)), h('p', {}, c.plan.why), h('button', { class: 'btn', disabled: c.execution === 'running' || c.execution === 'verified', onclick: () => act({ type: 'execute-page', cardId: c.id }) }, '确认执行这一步')) : null,
+      ...opportunityActions(c).map(action => {
+        const labels = { analysis: c.status === 'failed' ? '重试分析' : c.dwell ? '分析当前页面' : '分析并准备结果', task: c.status === 'delegated' ? '查看任务' : '交给拾遗执行', ui: '规划界面操作', refresh: '重新检查建议', dismiss: c.result || c.execution === 'verified' ? '收起' : '忽略', 'copy-result': '复制结果', execute: '确认执行这一步' }
+        const click = () => {
+          if (action === 'copy-result') { navigator.clipboard.writeText(c.result).catch(() => say('复制失败，请手动选择结果', 3000)); return }
+          if (action === 'task' && c.status === 'delegated') { view = 'today'; render(); return }
+          const types = { analysis: 'review-page', task: 'delegate-opportunity', ui: 'plan-page', refresh: 'refresh-opportunity', dismiss: 'dismiss', execute: 'execute-page' }
+          act({ type: types[action], cardId: c.id })
+        }
+        return h('button', { class: 'btn', onclick: click }, labels[action])
+      }),
+      c.stale ? h('p', {}, '来源页面已变化，旧建议需重新检查。') : null,
+      c.plan ? h('div', {}, h('pre', {}, JSON.stringify(c.plan.step, null, 2)), h('p', {}, c.plan.why)) : null,
       c.executionMessage ? h('p', {}, c.executionMessage) : null))
   if (c.kind === 'consent') {
     const nameInput = c.needName ? h('input', { class: 'scope', placeholder: `你在 ${c.app} 里显示的名字（用来认出哪句是你说的）`, onfocus: () => { editing = { consent: c.id }; post({ focus: true }) }, onblur: () => { editing = null } }) : null
@@ -275,7 +285,7 @@ function bookView() {
     editing?.rule === 'new' ? ruleEditor(null) : h('button', { class: 'btn add', onclick: () => { editing = { rule: 'new' }; render() } }, '＋ 加一条规则'),
     on.length ? h('ol', { class: 'rules' }, on.map(ruleRow)) : editing?.rule === 'new' ? null : h('div', { class: 'empty' }, '还没有规则。你可以直接写一条，比如「给客户的消息都带上称呼」。'),
     off.length ? h('details', { class: 'off-rules' }, h('summary', {}, `已停用 ${off.length} 条`), h('ol', { class: 'rules' }, off.map(ruleRow))) : null,
-    h('p', { class: 'path' }, `规则以这里为准，会同步写进 ${S.home}/workspace/AGENTS.md；直接改那个文件会被覆盖。`))
+    null)
 }
 
 function ruleEditor(r) {
@@ -299,10 +309,10 @@ function todayView() {
   const all = S.commitments.filter(c => c.status !== 'dropped')
   const day = d => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x.getTime() }
   const today = day(Date.now()), tomorrow = today + 86400_000
-  const groupOf = c => c.status === 'done' ? 'done' : !c.due ? 'none' : day(c.due) <= today ? 'today' : day(c.due) === tomorrow ? 'tomorrow' : 'later'
+  const groupOf = c => isComplete(c.status) ? 'done' : !c.due ? 'none' : day(c.due) <= today ? 'today' : day(c.due) === tomorrow ? 'tomorrow' : 'later'
   const GROUPS = [['today', '今天'], ['tomorrow', '明天'], ['later', '之后'], ['none', '没定时间'], ['done', '已完成']]
-  const item = c => h('li', { class: c.status === 'done' ? 'is-done' : '' },
-    h('button', { class: 'dot', title: c.status === 'done' ? '已完成' : '标记完成', onclick: () => c.status !== 'done' && act({ type: 'task-done', commitmentId: c.id }) }, c.status === 'done' ? '✓' : ''),
+  const item = c => h('li', { class: isComplete(c.status) ? 'is-done' : '' },
+    h('button', { class: 'dot', disabled: ['queued', 'running'].includes(c.status), title: isComplete(c.status) ? '已完成' : '标记完成', onclick: () => c.status !== 'done' && act({ type: 'task-done', commitmentId: c.id }) }, isComplete(c.status) ? '✓' : ''),
     h('span', {},
       h('b', {}, c.todo || c.what),
       h('small', {}, [c.to && c.source !== 'manual' ? `给${c.to}` : '', c.dueText, (c.progress || STATUS[c.status]) + (c.doneAt ? ' ' + c.doneAt : '')].filter(Boolean).join(' · ')),
