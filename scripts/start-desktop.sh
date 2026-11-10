@@ -3,12 +3,9 @@
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
-sh scripts/build-native.sh || test -x native/build/Shiyi.app/Contents/MacOS/Shiyi
 DEST="${TMPDIR:-/tmp}/shiyi-desktop-runtime/Shiyi.app"
 mkdir -p "$(dirname "$DEST")"
-ditto --norsrc native/build/Shiyi.app "$DEST"
-xattr -cr "$DEST"
-codesign --force --sign - --identifier com.raeqi.shiyi "$DEST"
+SHIYI_BUILD_APP="$DEST" sh scripts/build-native.sh
 codesign --verify --deep --strict "$DEST"
 export SHIYI_NATIVE_APP="$DEST"
 export SHIYI_NATIVE_BINARY="$DEST/Contents/MacOS/Shiyi"

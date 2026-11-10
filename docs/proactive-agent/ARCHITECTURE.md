@@ -34,12 +34,18 @@ actions.mjs 通过 Shiyi --inspect / --execute 读取 AX 控件或执行 setValu
 
 ## 模型与生命周期
 
-bridge/harness.mjs 用 stdio JSON-RPC 启动本机 dsh。triage / draft 进程池各自串行排队。Flash负责判断/规划，Pro负责处理/交付。session/wait 超时180秒，超时关闭对应池；排队时间不包含在单次执行超时内。缺少可靠单任务取消和精确排队位置。
+bridge/harness.mjs 通过项目内官方 SDK 启动匹配版本运行时，使用独立配置目录与显式 API key。triage / draft 进程池各自串行排队。Flash负责判断/规划，Pro负责处理/交付。session/wait 超时180秒，超时关闭对应池；排队时间不包含在单次执行超时内。缺少可靠单任务取消和精确排队位置。
 
 SSE重连成功清除过期断线气泡；前端静态资源需要重新加载才能更新。原生鼠标全局监听调用 window.shiyiDismiss，页面同时支持 Esc 与内部空白关闭。原生更新需重新签名，可能影响授权。
 
 ## 验证
 
-node scripts/actions-test.mjs：隔离模拟桥8项检查，不接触实际应用。真实模型分别验证机会判断、单步规划、工具计算交叉验证和 reviewContext 文件读取。完整原生权限、实际填写、外部点击关闭、定时投递桌宠仍待验证。
+node scripts/actions-test.mjs：隔离模拟桥8项检查，不接触实际应用。真实模型分别验证机会判断、单步规划、工具计算交叉验证和 reviewContext 文件读取；独立 npm 运行时的模型连接与工具交付已验证。完整原生权限、实际填写、外部点击关闭、定时投递桌宠仍待验证。
 
 历史 desktop/ 和 workspace-seed/ 为剧本演示。模拟聊天脚本只覆盖聊天专项。当前状态以本文件和 PRD 的验收边界为准。
+
+## 独立安装与凭据（v0.3）
+
+项目通过官方 SDK 与固定版本的 npm 运行时依赖启动 Agent，不依赖预安装桌面软件、绝对安装路径或已有登录态。用户 npm ci 后复制 .env.example，填写 SHIYI_API_KEY，运行 npm run check:model 和 npm start。运行时使用独立 SHIYI_HOME/runtime，模型凭据由显式环境变量传入；模型型号可配置，当前供应商固定。源码运行需要 macOS 原生构建环境、Node 24.9+ 和 npm。真实 API 验证需要用户提供 key；模拟测试不能替代该验证。
+
+依赖安装审计：固定版本上游依赖树当前报告 210 项（202 high、8 moderate，包含传递影响），尚未修复；不得将连接测试通过解释为已可无风险正式发布。

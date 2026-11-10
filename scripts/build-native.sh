@@ -2,7 +2,7 @@
 # 构建 native/build/Shiyi.app（拾遗桌宠 + 微信眼睛）。需要 Xcode Command Line Tools。
 set -e
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-APP="$ROOT/native/build/Shiyi.app"
+APP="${SHIYI_BUILD_APP:-$ROOT/native/build/Shiyi.app}"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 cat > "$APP/Contents/Info.plist" <<PLIST

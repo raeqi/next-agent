@@ -35,7 +35,7 @@ const CONFIG_PATH = join(HOME, 'config.json')
 if (!existsSync(CONFIG_PATH)) writeFileSync(CONFIG_PATH, JSON.stringify(DEFAULT_CONFIG, null, 2))
 const rawConfig = { ...DEFAULT_CONFIG, ...JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) }
 delete rawConfig.privateApps   // 有了白名单，私密应用名单不再需要
-const expand = c => ({ ...c, materials: c.materials.map(p => p.replace(/^~/, homedir())) })
+const expand = c => ({ ...c, triageModel: process.env.SHIYI_TRIAGE_MODEL || c.triageModel, draftModel: process.env.SHIYI_DRAFT_MODEL || c.draftModel, materials: c.materials.map(p => p.replace(/^~/, homedir())) })
 export const config = expand(rawConfig)
 export const rawMaterials = () => rawConfig.materials
 /** 写回 config.json（材料目录保留 ~ 写法）。 */
