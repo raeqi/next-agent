@@ -1,7 +1,8 @@
+import { modelConfig } from '../bridge/model-config.mjs'
 import { spawn } from 'node:child_process'
 const [major, minor] = process.versions.node.split('.').map(Number)
 if (major < 24 || (major === 24 && minor < 9)) { console.error('需要 Node 24.9+，请升级 Node 后重试'); process.exit(1) }
-if (!(process.env.SHIYI_API_KEY || process.env.DEEPSEEK_API_KEY)?.trim()) {
+if (!modelConfig().apiKey) {
   console.error('尚未配置模型。请复制 .env.example 为 .env，填写 SHIYI_API_KEY 后重试。'); process.exit(1)
 }
 if (process.platform !== 'darwin' && !process.argv.includes('--no-pet')) {

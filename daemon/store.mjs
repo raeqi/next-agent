@@ -1,6 +1,7 @@
 // 持久状态（~/.shiyi/state.json）+ 配置 + 变更广播。
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
+import { modelConfig } from '../bridge/model-config.mjs'
 import { homedir } from 'node:os'
 
 export const HOME = process.env.SHIYI_HOME ?? join(homedir(), '.shiyi')
@@ -25,8 +26,8 @@ const DEFAULT_CONFIG = {
   wechatListWidth: 0,
   morningAt: '09:00',
   wrapUpAt: '18:30',
-  triageModel: 'deepseek-v4-flash',
-  draftModel: 'deepseek-v4-pro',
+  triageModel: modelConfig().triageModel,
+  draftModel: modelConfig().draftModel,
   // 每小时最多主动开口次数（不含你主动点开）
   speakBudgetPerHour: 6,
 }
@@ -35,7 +36,7 @@ const CONFIG_PATH = join(HOME, 'config.json')
 if (!existsSync(CONFIG_PATH)) writeFileSync(CONFIG_PATH, JSON.stringify(DEFAULT_CONFIG, null, 2))
 const rawConfig = { ...DEFAULT_CONFIG, ...JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) }
 delete rawConfig.privateApps   // 有了白名单，私密应用名单不再需要
-const expand = c => ({ ...c, triageModel: process.env.SHIYI_TRIAGE_MODEL || c.triageModel, draftModel: process.env.SHIYI_DRAFT_MODEL || c.draftModel, materials: c.materials.map(p => p.replace(/^~/, homedir())) })
+const expand = c => ({ ...c, triageModel: modelConfig().triageModel, draftModel: modelConfig().draftModel, materials: c.materials.map(p => p.replace(/^~/, homedir())) })
 export const config = expand(rawConfig)
 export const rawMaterials = () => rawConfig.materials
 /** 写回 config.json（材料目录保留 ~ 写法）。 */

@@ -1,5 +1,6 @@
 // 官方 SDK 的兼容适配层。运行时由项目依赖解析，不依赖桌面版或其登录态。
 import { DeepSeekHarness } from '@deepseek-ai/dsh-sdk-client'
+import { modelConfig } from './model-config.mjs'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
@@ -7,19 +8,20 @@ import { homedir } from 'node:os'
 export class Harness {
   constructor(o = {}) {
     this.o = o
-    const apiKey = process.env.SHIYI_API_KEY || process.env.DEEPSEEK_API_KEY
+    const route = modelConfig()
+    const apiKey = route.apiKey
     if (!apiKey) throw new Error('缺少 API key：请复制 .env.example 为 .env 并填写 SHIYI_API_KEY，再用 npm start 启动')
     // 只传必需的系统环境和显式凭据，不继承宿主其他模型账号或 DSH_HOME。
     const env = Object.fromEntries(['PATH', 'HOME', 'TMPDIR', 'LANG', 'SHELL', 'SYSTEMROOT', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY'].filter(k => process.env[k]).map(k => [k, process.env[k]]))
-    env.DEEPSEEK_API_KEY = apiKey
+    env[route.credential] = apiKey
     env.DSH_PERMISSION_MODE = 'workspace-write'
     const home = process.env.SHIYI_HOME || join(homedir(), '.shiyi')
     this.sdk = new DeepSeekHarness({
       profile: 'sdk', cwd: o.cwd, processCwd: o.cwd,
       dshHome: join(home, 'runtime'), env,
-      model: o.model || process.env.SHIYI_DRAFT_MODEL || 'deepseek-v4-pro',
-      provider: 'deepseek-official',
-      ...(o.reasoningEffort ? { reasoningEffort: o.reasoningEffort } : {}),
+      model: o.model || route.draftModel,
+      provider: route.provider,
+      ...(o.reasoningEffort && route.provider === 'deepseek-official' ? { reasoningEffort: o.reasoningEffort } : {}),
       initializeTimeoutMs: 60000, requestTimeoutMs: 180000,
     })
   }

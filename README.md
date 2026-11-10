@@ -83,7 +83,7 @@
 2. 填写 `SHIYI_API_KEY`，运行 `npm run check:model` 测试连接。
 3. 用 `npm start` 启动；修改 key 或模型后需要重新启动。
 
-目前只接通默认模型供应商，尚不支持任意供应商或网关切换，其他服务的 key 不能直接替换使用。`.env` 已被 Git 忽略，不要把真实 key 写入源码或提交到仓库。
+公开示例默认使用 Kimi 中国站；SHIYI_PROVIDER 可选择 moonshotai-cn、moonshotai 或 deepseek-official。供应商、模型和 key 必须匹配；支持选择已接入的供应商，不支持任意网关。`.env` 已被 Git 忽略，不要把真实 key 写入源码或提交到仓库。
 
 页面文字会发送给配置的模型服务，本机 OCR 不等于内容全部留在本机。请按实际需要选择观察应用与可读材料目录。
 
@@ -154,3 +154,5 @@ npm run check:model
 | `desktop/`、`workspace-seed/` | 历史剧本演示，不代表当前后台能力 |
 
 </details>
+
+供应商配置：公开 .env.example 默认使用 Kimi；本地 .env 可独立选择其他已支持服务，不进入 Git。Kimi 真实调用仍需对应服务凭据验证。
