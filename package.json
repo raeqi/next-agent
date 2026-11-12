@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node --env-file-if-exists=.env scripts/start.mjs",
     "start:headless": "node --env-file-if-exists=.env scripts/start.mjs --no-pet",
-    "test": "node scripts/actions-test.mjs",
+    "test": "node scripts/model-config-test.mjs && node scripts/actions-test.mjs",
     "check:model": "node --env-file-if-exists=.env scripts/check-model.mjs"
   },
   "dependencies": {

@@ -77,13 +77,26 @@
 
 ## 模型与 API key 配置
 
-每位使用者配置自己的 API key，模型调用费用由该 key 所属账户承担。项目不附带密钥，也不要求安装、登录额外的桌面 Agent 软件。
+每位使用者配置自己的 API key，模型调用费用由该 key 所属账户承担。项目不附带密钥，也不要求安装、登录额外的桌面 Agent 软件。调用按 OpenAI Chat Completions 兼容方式发出，填写 key、接口地址和模型名即可，不必声明供应商。
 
 1. 将项目根目录的 `.env.example` 复制为 `.env`。
-2. 填写 `SHIYI_API_KEY`，运行 `npm run check:model` 测试连接。
-3. 用 `npm start` 启动；修改 key 或模型后需要重新启动。
+2. 填写 `MODEL_API_KEY`、`MODEL_BASE_URL` 和 `MODEL_NAME`，运行 `npm run check:model` 测试连接。
+3. 用 `npm start` 启动；修改 key、地址或模型后需要重新启动。
 
-公开示例默认使用 Kimi 中国站；SHIYI_PROVIDER 可选择 moonshotai-cn、moonshotai 或 deepseek-official。供应商、模型和 key 必须匹配；支持选择已接入的供应商，不支持任意网关。`.env` 已被 Git 忽略，不要把真实 key 写入源码或提交到仓库。
+`MODEL_BASE_URL` 是服务的 OpenAI 兼容地址，`MODEL_NAME` 是该服务上的模型 id。机会判断和内容处理可以分开指定：`MODEL_TRIAGE_NAME`、`MODEL_DRAFT_NAME` 有值时优先，否则都使用 `MODEL_NAME`。
+
+| 服务 | `MODEL_BASE_URL` | `MODEL_NAME` 示例 |
+|---|---|---|
+| OpenAI | `https://api.openai.com/v1` | `gpt-4.1` |
+| DeepSeek | `https://api.deepseek.com` | `deepseek-v4-pro` |
+| Kimi（中国站） | `https://api.moonshot.cn/v1` | `kimi-k3.1-pro` |
+| Kimi（国际站） | `https://api.moonshot.ai/v1` | `kimi-k3.1-pro` |
+| 通义千问 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus` |
+| 智谱 | `https://open.bigmodel.cn/api/paas/v4` | `glm-4.7` |
+
+模型 id 以各服务当前文档为准。地址按原样传给运行时，一般要写到文档里的版本前缀（常见是 `/v1`）。`.env` 已被 Git 忽略，不要把真实 key 写入源码或提交到仓库。
+
+已有配置可以不改：`SHIYI_API_KEY`、`SHIYI_PROVIDER`、`SHIYI_TRIAGE_MODEL`、`SHIYI_DRAFT_MODEL`、`MOONSHOT_API_KEY`、`DEEPSEEK_API_KEY` 仍会读取。和新变量同时存在时，`MODEL_API_KEY`、`MODEL_BASE_URL` 以及 `MODEL_NAME` / `MODEL_TRIAGE_NAME` / `MODEL_DRAFT_NAME` 优先。
 
 页面文字会发送给配置的模型服务，本机 OCR 不等于内容全部留在本机。请按实际需要选择观察应用与可读材料目录。
 
@@ -101,7 +114,7 @@ git clone https://github.com/raeqi/next-agent.git
 cd next-agent
 npm ci
 cp .env.example .env
-# 编辑 .env，填写 SHIYI_API_KEY
+# 编辑 .env，填写 MODEL_API_KEY、MODEL_BASE_URL、MODEL_NAME
 npm run check:model
 npm start
 ```
@@ -118,9 +131,11 @@ npm start
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `SHIYI_API_KEY` | — | 必填，模型服务凭据 |
-| `SHIYI_TRIAGE_MODEL` | 见 `.env.example` | 机会判断和操作规划模型 |
-| `SHIYI_DRAFT_MODEL` | 见 `.env.example` | 内容处理和任务执行模型 |
+| `MODEL_API_KEY` | — | 必填，模型服务凭据，写在项目根目录 `.env` |
+| `MODEL_BASE_URL` | — | 必填，OpenAI 兼容接口地址 |
+| `MODEL_NAME` | — | 必填，模型 id；判断和执行共用 |
+| `MODEL_TRIAGE_NAME` | `MODEL_NAME` | 机会判断和操作规划模型 |
+| `MODEL_DRAFT_NAME` | `MODEL_NAME` | 内容处理和任务执行模型 |
 | `SHIYI_PORT` | `18746` | 本机后台端口 |
 | `SHIYI_HOME` | `~/.shiyi` | 状态、配置与结果目录 |
 | `SHIYI_NATIVE_APP` | `~/Applications/Shiyi.app` | 原生运行副本路径 |
@@ -155,4 +170,4 @@ npm run check:model
 
 </details>
 
-供应商配置：公开 .env.example 默认使用 Kimi；本地 .env 可独立选择其他已支持服务，不进入 Git。Kimi 真实调用仍需对应服务凭据验证。
+模型 key、接口地址和模型名写在项目根目录的 `.env`（由 `.env.example` 复制），不进入 Git。任意 OpenAI 兼容接口都可以，真实调用仍需对应服务的 key。
