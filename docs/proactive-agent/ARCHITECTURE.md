@@ -50,7 +50,7 @@ node scripts/actions-test.mjs：隔离模拟桥8项检查，不接触实际应�
 
 ## 独立安装与凭据（v0.3）
 
-项目通过官方 SDK 与固定版本的 npm 运行时依赖启动 Agent，不依赖预安装桌面软件、绝对安装路径或已有登录态。用户 npm ci 后复制 .env.example，填写 MODEL_API_KEY、MODEL_BASE_URL 和 MODEL_NAME，运行 npm run check:model 和 npm start。运行时使用独立 SHIYI_HOME/runtime，模型凭据由显式环境变量传入；模型型号与接口地址可配置，按 OpenAI 兼容方式调用，不必声明供应商。已有 SHIYI_*、MOONSHOT_API_KEY、DEEPSEEK_API_KEY 仍可读取。源码运行需要 macOS 原生构建环境、Node 24.9+ 和 npm。真实 API 验证需要用户提供 key；模拟测试不能替代该验证。
+项目通过官方 SDK 与固定版本的 npm 运行时依赖启动 Agent，不依赖预安装桌面软件、绝对安装路径或已有登录态。用户 npm ci 后可以直接 npm start。未填写 MODEL_API_KEY 或 SHIYI_API_KEY 时进入演示模式，用中文剧本走通建议和任务；要真实模型再在 .env 填写 MODEL_API_KEY、MODEL_BASE_URL 和 MODEL_NAME，然后运行 npm run check:model 并重启。运行时使用独立 SHIYI_HOME/runtime，模型凭据由显式环境变量传入；模型型号与接口地址可配置，按 OpenAI 兼容方式调用，不必声明供应商。已有 SHIYI_*、MOONSHOT_API_KEY、DEEPSEEK_API_KEY 仍可读取。源码运行需要 macOS 原生构建环境、Node 24.9+ 和 npm。真实 API 验证需要用户提供 key；模拟测试不能替代该验证。
 
 依赖审计修复：通过 overrides 将 undici、fflate、MCP client 和 Zod 的依赖解析到修复版本；锁文件审计为0项漏洞，真实模型连接与工具交付已回归通过。
 

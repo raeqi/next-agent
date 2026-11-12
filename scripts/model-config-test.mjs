@@ -1,18 +1,20 @@
 import assert from 'node:assert/strict'
-import { configProblem, MISSING_KEY_MESSAGE, modelConfig, providerPatch } from '../bridge/model-config.mjs'
+import { configProblem, DEMO_NOTICE, isDemoMode, modelConfig, providerPatch } from '../bridge/model-config.mjs'
 
 let passed = 0
 function check(name, fn) { fn(); passed++; console.log('PASS', name) }
 
-check('未配置时点名新变量', () => {
+check('未配置 key 时进入演示模式，并说明如何换成真实模型', () => {
   const route = modelConfig({})
-  const problem = configProblem(route)
   assert.equal(route.apiKey, '')
-  assert.match(problem, /MODEL_API_KEY/)
-  assert.match(problem, /MODEL_BASE_URL/)
-  assert.match(problem, /MODEL_NAME/)
-  assert.equal(problem, MISSING_KEY_MESSAGE)
-  assert.doesNotMatch(problem, /moonshot|SHIYI_API_KEY|SHIYI_PROVIDER/)
+  assert.equal(configProblem(route), '')
+  assert.equal(isDemoMode({}), true)
+  assert.match(DEMO_NOTICE, /MODEL_API_KEY/)
+  assert.match(DEMO_NOTICE, /MODEL_BASE_URL/)
+  assert.match(DEMO_NOTICE, /MODEL_NAME/)
+  assert.equal(isDemoMode({ MODEL_API_KEY: 'k', MODEL_BASE_URL: 'https://example.test/v1', MODEL_NAME: 'm' }), false)
+  assert.equal(isDemoMode({ MODEL_API_KEY: 'k', MODEL_BASE_URL: 'https://example.test/v1', MODEL_NAME: 'm', DEMO_MODE: '1' }), true)
+  assert.equal(isDemoMode({ SHIYI_API_KEY: 'legacy' }), false)
 })
 
 check('key、地址和模型名走 OpenAI 兼容路由', () => {

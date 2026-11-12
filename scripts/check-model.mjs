@@ -1,8 +1,12 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { modelConfig } from '../bridge/model-config.mjs'
+import { DEMO_NOTICE, isDemoMode, modelConfig } from '../bridge/model-config.mjs'
 import { Harness, lastAssistantText } from '../bridge/harness.mjs'
+if (isDemoMode()) {
+  console.error('当前是演示模式，没有真实模型可测。' + DEMO_NOTICE)
+  process.exit(1)
+}
 // 独立空目录验证，不读取桌面软件已有凭据或用户材料。
 const dir = mkdtempSync(join(tmpdir(), 'shiyi-model-check-'))
 process.env.SHIYI_HOME = dir

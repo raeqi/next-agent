@@ -1,13 +1,17 @@
 // 持久状态（~/.shiyi/state.json）+ 配置 + 变更广播。
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
-import { modelConfig } from '../bridge/model-config.mjs'
+import { isDemoMode, modelConfig } from '../bridge/model-config.mjs'
 import { homedir } from 'node:os'
 
 export const HOME = process.env.SHIYI_HOME ?? join(homedir(), '.shiyi')
 export const WS = join(HOME, 'workspace')          // 「电脑根目录」：agent 的项目根
 export const SHADOW = join(WS, 'shadow')           // agent 唯一可写处
 mkdirSync(SHADOW, { recursive: true })
+
+const activeModels = () => isDemoMode()
+  ? { triageModel: '演示剧本', draftModel: '演示剧本' }
+  : { triageModel: modelConfig().triageModel, draftModel: modelConfig().draftModel }
 
 const DEFAULT_CONFIG = {
   // agent 可以只读查找材料的目录
@@ -26,8 +30,8 @@ const DEFAULT_CONFIG = {
   wechatListWidth: 0,
   morningAt: '09:00',
   wrapUpAt: '18:30',
-  triageModel: modelConfig().triageModel,
-  draftModel: modelConfig().draftModel,
+  triageModel: activeModels().triageModel,
+  draftModel: activeModels().draftModel,
   // 每小时最多主动开口次数（不含你主动点开）
   speakBudgetPerHour: 6,
 }
@@ -36,7 +40,7 @@ const CONFIG_PATH = join(HOME, 'config.json')
 if (!existsSync(CONFIG_PATH)) writeFileSync(CONFIG_PATH, JSON.stringify(DEFAULT_CONFIG, null, 2))
 const rawConfig = { ...DEFAULT_CONFIG, ...JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) }
 delete rawConfig.privateApps   // 有了白名单，私密应用名单不再需要
-const expand = c => ({ ...c, triageModel: modelConfig().triageModel, draftModel: modelConfig().draftModel, materials: c.materials.map(p => p.replace(/^~/, homedir())) })
+const expand = c => ({ ...c, ...activeModels(), materials: c.materials.map(p => p.replace(/^~/, homedir())) })
 export const config = expand(rawConfig)
 export const rawMaterials = () => rawConfig.materials
 /** 写回 config.json（材料目录保留 ~ 写法）。 */

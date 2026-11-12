@@ -10,7 +10,21 @@ const LEGACY = {
 
 export const OPENAI_COMPATIBLE = 'openai-compatible'
 export const GENERIC_CREDENTIAL = 'MODEL_API_KEY'
-export const MISSING_KEY_MESSAGE = '尚未配置模型。请复制 .env.example 为 .env，填写 MODEL_API_KEY、MODEL_BASE_URL 和 MODEL_NAME 后重试。'
+export const DEMO_NOTICE = '演示模式：回复是事先写好的剧本，没有调用真实模型。要体验真实能力，在项目根目录 .env 填写 MODEL_API_KEY、MODEL_BASE_URL 和 MODEL_NAME，然后重新启动。'
+
+const DEMO_FLAGS = new Set(['1', 'true', 'yes', 'on'])
+export function demoForced(env = process.env) {
+  return DEMO_FLAGS.has((env.DEMO_MODE ?? '').trim().toLowerCase())
+}
+
+/** 没有可用 key，或显式 DEMO_MODE=1。有 key 且未强制时走真实模型。 */
+export function isDemoMode(env = process.env) {
+  if (demoForced(env)) return true
+  try { return !modelConfig(env).apiKey }
+  catch {
+    return !['MODEL_API_KEY', 'SHIYI_API_KEY', 'MOONSHOT_API_KEY', 'DEEPSEEK_API_KEY'].some(key => (env[key] ?? '').trim())
+  }
+}
 
 const filled = (env, key) => (env[key] ?? '').trim()
 const first = (env, keys) => {
@@ -95,9 +109,9 @@ function isHttp(url) {
   } catch { return false }
 }
 
-/** 启动前的配置问题。空字符串表示可以启动。 */
+/** 真实模型配置是否还不完整。没有 key 时不报错，启动方改走演示模式。 */
 export function configProblem(route) {
-  if (!route.apiKey) return MISSING_KEY_MESSAGE
+  if (!route.apiKey) return ''
   if (route.mode !== 'custom') return ''
   if (!route.baseURL) return '模型配置不完整。请在 .env 中填写 MODEL_BASE_URL（OpenAI 兼容接口地址）和 MODEL_NAME。'
   if (!isHttp(route.baseURL)) return 'MODEL_BASE_URL 需要是 http 或 https 地址。'
