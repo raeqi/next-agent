@@ -1,7 +1,7 @@
 // M0：用 DeepSeek 模型经 Harness 真跑「承诺 → 交付」起草，并校验：
 //   1) shadow/ 下产出草稿；2) 草稿带 [来源: path#Lx] 出处且出处真实存在；
 //   3) shadow/ 以外的文件一个字节都没变；4) （--probe）sandbox 拒绝写 shadow/ 以外。
-// 用法：node bridge/m0.mjs [--model deepseek-v4-flash] [--probe]
+// 用法：node bridge/m0.mjs [--model deepseek-flash] [--probe]
 
 import { cpSync, rmSync, readFileSync, readdirSync, statSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'

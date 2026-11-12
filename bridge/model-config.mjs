@@ -5,7 +5,7 @@
 const LEGACY = {
   'moonshotai-cn': { credential: 'MOONSHOT_API_KEY', triage: 'kimi-k3.1-pro-highspeed', draft: 'kimi-k3.1-pro', catalog: true },
   moonshotai: { credential: 'MOONSHOT_API_KEY', triage: 'kimi-k3.1-pro-highspeed', draft: 'kimi-k3.1-pro', catalog: true },
-  'deepseek-official': { credential: 'DEEPSEEK_API_KEY', triage: 'deepseek-v4-flash', draft: 'deepseek-v4-pro', catalog: false, passReasoningEffort: true },
+  'deepseek-official': { credential: 'DEEPSEEK_API_KEY', triage: 'deepseek-flash', draft: 'deepseek-v4-pro', catalog: false, passReasoningEffort: true },
 }
 
 export const OPENAI_COMPATIBLE = 'openai-compatible'

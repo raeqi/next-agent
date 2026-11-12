@@ -52,6 +52,8 @@ npm start
 | 通义千问 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus` |
 | 智谱 | `https://open.bigmodel.cn/api/paas/v4` | `glm-4.7` |
 
+DeepSeek 按当前文档填写：`MODEL_BASE_URL=https://api.deepseek.com`，`MODEL_NAME=deepseek-v4-pro`。更快、更便宜的是 `deepseek-flash`，适合机会判断，例如 `MODEL_TRIAGE_NAME=deepseek-flash`，起草仍用 `deepseek-v4-pro`。
+
 模型 id 以各服务当前文档为准。不必声明供应商。已经在用 `SHIYI_API_KEY`、`SHIYI_PROVIDER`、`MOONSHOT_API_KEY`、`DEEPSEEK_API_KEY` 的环境会继续走真实模型。有 key 仍想看剧本时，加上 `DEMO_MODE=1`。
 
 ---

@@ -106,7 +106,7 @@ check('DeepSeek 旧配置走官方适配器，不生成兼容补丁', () => {
   assert.equal(route.provider, 'deepseek-official')
   assert.equal(route.credential, 'DEEPSEEK_API_KEY')
   assert.equal(route.apiKey, 'ds-key')
-  assert.equal(route.triageModel, 'deepseek-v4-flash')
+  assert.equal(route.triageModel, 'deepseek-flash')
   assert.equal(route.draftModel, 'deepseek-v4-pro')
   assert.equal(route.passReasoningEffort, true)
   assert.equal(providerPatch(route), null)
