@@ -15,16 +15,19 @@ let bubble = { text: '', until: 0, tone: '' }
 let editing = null      // {id, mode:'revise'|'supply'}
 let quitArmed = false
 let showTech = localStorage.getItem('shiyi.tech') === '1'
+let demoSaid = false
 
 const PET_SVG = `<svg viewBox="0 0 120 110" class="pet-svg"><ellipse class="pet-shadow" cx="60" cy="104" rx="34" ry="5"/><g class="pet-bodyg"><path class="pet-body" d="M60 14c26 0 44 20 44 46 0 26-17 40-44 40S16 86 16 60c0-26 18-46 44-46z"/><path class="pet-leaf" d="M60 15c-2-8 3-13 10-13-1 7-4 11-10 13z"/><ellipse class="pet-cheek" cx="34" cy="70" rx="7" ry="4"/><ellipse class="pet-cheek" cx="86" cy="70" rx="7" ry="4"/><g class="pet-eyes"><g transform="translate(44 56)"><ellipse class="pet-pupil" rx="6" ry="8"/><circle class="pet-glint" cx="2" cy="-3" r="2"/></g><g transform="translate(76 56)"><ellipse class="pet-pupil" rx="6" ry="8"/><circle class="pet-glint" cx="2" cy="-3" r="2"/></g></g><g class="pet-closed"><path d="M37 58q7 5 14 0M69 58q7 5 14 0"/></g><path class="pet-mouth" d="M55 76q5 4 10 0"/><g class="pet-dots"><circle cx="96" cy="22" r="3"/><circle cx="106" cy="14" r="3"/><circle cx="114" cy="5" r="3"/></g></g></svg>`
 
 const root = document.getElementById('root')
 const panel = h('div', { class: 'panel' })
 const bubbleEl = h('div', { class: 'bubble' })
+const demoEl = h('div', { class: 'demo-banner' })
 const petEl = h('div', { class: 'pet', html: PET_SVG, title: '点我查看任务与建议；按住可以拖走' }, h('span', { class: 'badge' }))
 const menu = h('div', { class: 'menu' })
 const petRow = h('div', { class: 'pet-row' }, menu, petEl)
-root.append(panel, h('div', { class: 'dock' }, bubbleEl, petRow))
+root.append(panel, h('div', { class: 'dock' }, demoEl, bubbleEl, petRow))
+demoEl.onclick = () => { if (S?.demoNotice) say(S.demoNotice, 9000, 'warn') }
 
 window.shiyiDismiss = () => { view = null; editing = null; menu.classList.remove('is-on'); bubble.until = 0; render() }
 addEventListener('mousedown', e => { if (!e.target.closest('.panel, .pet, .menu, .bubble')) window.shiyiDismiss() })
@@ -68,6 +71,7 @@ function connect() {
     const w = JSON.stringify(S.watch)
     if (w !== lastWatch) { lastWatch = w; post({ watch: S.watch }) }
     if (S.nod !== lastNod) { if (lastNod >= 0 && S.nodText) { nod(); say(S.nodText, 4000, 'quiet') } lastNod = S.nod }
+    if (S.demo && !demoSaid) { demoSaid = true; say(S.demoNotice, 9000, 'warn') }
     if (prev && S.cards.length > prev.cards.length && !view) say(S.cards[0].title, 0, 'call')
     if (!editing) render()
   }
@@ -83,6 +87,9 @@ function render() {
   if (!S) { sizeTo(); return }
   petEl.className = `pet is-${S.mode}`
   petEl.querySelector('.badge').textContent = S.cards.length || ''
+  demoEl.classList.toggle('is-on', !!S.demo)
+  demoEl.textContent = S.demo ? '演示模式' : ''
+  demoEl.title = S.demoNotice || ''
 
   // 气泡：权限提示 > 正在干活 > 临时话
   let text = '', tone = ''
@@ -119,6 +126,7 @@ function head() {
   return h('div', { class: 'head' },
     typeof view === 'object' ? h('button', { class: 'back', onclick: () => { view = 'cards'; render() } }, '‹') : null,
     h('b', {}, title),
+    S.demo ? h('span', { class: 'status', title: S.demoNotice }, '演示模式') : null,
     h('button', { class: 'x', onclick: () => { view = null; render() } }, '×'))
 }
 
@@ -360,6 +368,7 @@ function settingsView() {
     act({ type: 'clear-transcripts' }); say('存下的聊天记录都清掉了。', 2500, 'quiet')
   } }, '清空聊天记录')
   return h('div', { class: 'scroll settings' },
+    S.demo ? h('p', { class: 'demo-banner is-on' }, S.demoNotice) : null,
     h('h4', {}, '能看什么'),
     h('p', { class: 'intro' }, '这里只显示拾遗实际发现过的应用。首次切换到一个新应用时，会询问是否观察；允许后才读取页面变化。观察和操作分别授权。'),
     h('div', { class: 'app-list' }, S.apps.length ? S.apps.map(appRow) : h('p', { class: 'intro' }, '还没有发现应用。请在桌面切换到你想让拾遗观察的应用，原生桌宠会询问你。')),
@@ -415,7 +424,7 @@ function sizeTo() {
   const on = bubbleEl.classList.contains('is-on')
   const m = menu.classList.contains('is-on')
   const w = view ? 440 : on ? 300 : m ? 280 : 120
-  const hh = view ? 700 : m ? 320 + (on ? 70 : 0) : on ? 210 : 110
+  const hh = view ? 700 : m ? 320 + (on ? 70 : 0) : (on ? 210 : 110) + (S?.demo ? 28 : 0)
   const k = `${w}x${hh}`
   if (k !== lastSize) { lastSize = k; post({ size: { w, h: hh } }) }
   requestAnimationFrame(reportHit)

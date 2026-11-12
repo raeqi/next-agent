@@ -7,6 +7,7 @@ import { join, dirname, extname, normalize, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFile, spawn } from 'node:child_process'
 import { state, live, config, saveConfig, APPS, findApp, appName, watching, paused, rawMaterials, WS, HOME, subscribe, changed, save, insight, card, dropCard, maySpeak, spoke, hm, ymd, uid } from './store.mjs'
+import { DEMO_NOTICE, isDemoMode } from '../bridge/model-config.mjs'
 import { opportunityMode } from '../pet/action-policy.mjs'
 import { inspect, digest, executePlan } from './actions.mjs'
 import { appInfo, NEVER, ocrText, fingerprint } from './perceive.mjs'
@@ -524,6 +525,7 @@ function snapshot() {
 
   return {
     mode, eyes: live.eyes, paused: isPaused, pauseUntil: config.pauseUntil, watching: watchingNow, watchingApp: watchingNow ? appName(live.focus.bundle) : '',
+    demo: isDemoMode(), demoNotice: isDemoMode() ? DEMO_NOTICE : '',
     focus: live.focus, screenAccess: live.screenAccess,
     watch: { bundles: on, interval: config.captureIntervalSec, paused: isPaused || !live.eyes },
     apps: [...new Set([...Object.values(config.discoveredApps ?? {}), ...Object.keys(seenBundles)])].map(name => ({ name })).map(a => { const v = bundlesOf(a.name).map(b => config.apps[b]); return { name: a.name, family: a.family, operation: config.operations?.[bundlesOf(a.name)[0]] ?? 'off', autoTargets: config.autoTargets?.[bundlesOf(a.name)[0]] ?? [], state: v.includes('on') ? 'on' : v.includes('off') ? 'off' : 'unasked' } }),
@@ -582,6 +584,7 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`拾遗 daemon → http://127.0.0.1:${PORT}/pet/   数据：${HOME}`)
+  if (isDemoMode()) console.log(DEMO_NOTICE)
   const app = process.env.SHIYI_NATIVE_APP || join(ROOT, 'native/build/Shiyi.app')
   if (!args.includes('--no-pet')) {
     if (existsSync(app)) spawn('open', ['--env', `SHIYI_URL=http://127.0.0.1:${PORT}`, app], { stdio: 'ignore' })

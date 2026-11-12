@@ -16,6 +16,46 @@
 
 产品方向见 **[产品说明](docs/proactive-agent/PRD.md)**；实现与验证边界见 [架构说明](docs/proactive-agent/ARCHITECTURE.md)。关于模型能力、常驻 Agent、人机协作与产品机会的背景判断，见 [趋势研究](docs/research-trends.md)。
 
+## 怎么开始
+
+不填 API key，拾遗就以**演示模式**启动：建议、起草和后台任务都会出现，内容是事先写好的中文剧本。要体验真实的 Agent 能力，再把 key 填进项目根目录的 `.env`。
+
+| | 演示 | 真实模型 |
+|---|---|---|
+| 你要做的 | 不填 API key，直接启动 | 在项目根目录把 `.env.example` 复制为 `.env`，填写下面三项，然后重启 |
+| 会看到什么 | 建议、起草和后台任务都会走通。回复是事先写好的中文剧本，用来把产品流程看完 | 同一套流程改由你的模型判断和交付 |
+| 填哪里 | 不用填。桌宠和后台日志会标明「演示模式」 | `.env` 里的 `MODEL_API_KEY`、`MODEL_BASE_URL`、`MODEL_NAME` |
+
+```sh
+git clone https://github.com/raeqi/next-agent.git
+cd next-agent
+npm ci
+npm start
+```
+
+不填 key 就是演示模式。只看后台、不打开桌宠：`npm run start:headless`。原生桌宠需要 macOS；Linux 上用 headless 即可把流程跑通。
+
+要体验真实的 Agent 能力，填写 `.env`：
+
+| 变量 | 作用 |
+|---|---|
+| `MODEL_API_KEY` | 你的 API key |
+| `MODEL_BASE_URL` | OpenAI Chat Completions 兼容地址，按服务文档原样填写 |
+| `MODEL_NAME` | 该服务上的模型 id。判断和执行可以分开：`MODEL_TRIAGE_NAME`、`MODEL_DRAFT_NAME`，不填就都用 `MODEL_NAME` |
+
+| 服务 | `MODEL_BASE_URL` | `MODEL_NAME` 示例 |
+|---|---|---|
+| OpenAI | `https://api.openai.com/v1` | `gpt-4.1` |
+| DeepSeek | `https://api.deepseek.com` | `deepseek-v4-pro` |
+| Kimi（中国站） | `https://api.moonshot.cn/v1` | `kimi-k3.1-pro` |
+| Kimi（国际站） | `https://api.moonshot.ai/v1` | `kimi-k3.1-pro` |
+| 通义千问 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus` |
+| 智谱 | `https://open.bigmodel.cn/api/paas/v4` | `glm-4.7` |
+
+DeepSeek 按当前文档填写：`MODEL_BASE_URL=https://api.deepseek.com`，`MODEL_NAME=deepseek-v4-pro`。更快、更便宜的是 `deepseek-flash`，适合机会判断，例如 `MODEL_TRIAGE_NAME=deepseek-flash`，起草仍用 `deepseek-v4-pro`。
+
+模型 id 以各服务当前文档为准。不必声明供应商。已经在用 `SHIYI_API_KEY`、`SHIYI_PROVIDER`、`MOONSHOT_API_KEY`、`DEEPSEEK_API_KEY` 的环境会继续走真实模型。有 key 仍想看剧本时，加上 `DEMO_MODE=1`。
+
 ---
 
 ## 为什么做它
@@ -77,13 +117,13 @@
 
 ## 模型与 API key 配置
 
-每位使用者配置自己的 API key，模型调用费用由该 key 所属账户承担。项目不附带密钥，也不要求安装、登录额外的桌面 Agent 软件。
+不填 key 就能启动，走演示模式。真实调用的费用由 key 所属账户承担。项目不附带密钥，也不要求安装、登录额外的桌面 Agent 软件。
 
-1. 将项目根目录的 `.env.example` 复制为 `.env`。
-2. 填写 `SHIYI_API_KEY`，运行 `npm run check:model` 测试连接。
-3. 用 `npm start` 启动；修改 key 或模型后需要重新启动。
+1. 演示：跳过 `.env`，直接 `npm start`。
+2. 真实模型：把 `.env.example` 复制为项目根目录的 `.env`，填写 `MODEL_API_KEY`、`MODEL_BASE_URL`、`MODEL_NAME`（示例见上面的「怎么开始」），用 `npm run check:model` 测试连接，再重启。
+3. 改 key、地址或模型后需要重新启动。
 
-公开示例默认使用 Kimi 中国站；SHIYI_PROVIDER 可选择 moonshotai-cn、moonshotai 或 deepseek-official。供应商、模型和 key 必须匹配；支持选择已接入的供应商，不支持任意网关。`.env` 已被 Git 忽略，不要把真实 key 写入源码或提交到仓库。
+`.env` 已被 Git 忽略，不要把真实 key 写入源码或提交到仓库。已有的 `SHIYI_API_KEY`、`SHIYI_PROVIDER`、`SHIYI_TRIAGE_MODEL`、`SHIYI_DRAFT_MODEL`、`MOONSHOT_API_KEY`、`DEEPSEEK_API_KEY` 仍会读取；和新变量同时存在时，`MODEL_*` 优先。
 
 页面文字会发送给配置的模型服务，本机 OCR 不等于内容全部留在本机。请按实际需要选择观察应用与可读材料目录。
 
@@ -94,17 +134,16 @@
 
 ### 安装与启动
 
-需要 macOS 14+、Xcode Command Line Tools、Node.js 24.9+（包含 npm）以及有效 API key。首次安装需要网络；运行时部分扩展功能可能需要 pnpm。
+需要 macOS 14+、Xcode Command Line Tools、Node.js 24.9+（包含 npm）。API key 不是启动条件：不填就是演示模式。首次安装需要网络；运行时部分扩展功能可能需要 pnpm。
 
 ```sh
 git clone https://github.com/raeqi/next-agent.git
 cd next-agent
 npm ci
-cp .env.example .env
-# 编辑 .env，填写 SHIYI_API_KEY
-npm run check:model
 npm start
 ```
+
+要换真实模型时，再 `cp .env.example .env`，填写 `MODEL_API_KEY`、`MODEL_BASE_URL`、`MODEL_NAME`，运行 `npm run check:model` 后重启。
 
 启动后出现原生桌面浮窗，无需在浏览器打开。后台默认监听 `127.0.0.1:18746`。仅启动后台可使用 `npm run start:headless`。
 
@@ -118,9 +157,12 @@ npm start
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `SHIYI_API_KEY` | — | 必填，模型服务凭据 |
-| `SHIYI_TRIAGE_MODEL` | 见 `.env.example` | 机会判断和操作规划模型 |
-| `SHIYI_DRAFT_MODEL` | 见 `.env.example` | 内容处理和任务执行模型 |
+| `MODEL_API_KEY` | 空（演示模式） | 真实模型的凭据，写在项目根目录 `.env` |
+| `MODEL_BASE_URL` | 空 | 真实模型的 OpenAI 兼容接口地址 |
+| `MODEL_NAME` | 空 | 真实模型的 id；判断和执行共用 |
+| `DEMO_MODE` | 空 | 设为 `1` 时，即使已有 key 也走演示剧本 |
+| `MODEL_TRIAGE_NAME` | `MODEL_NAME` | 机会判断和操作规划模型 |
+| `MODEL_DRAFT_NAME` | `MODEL_NAME` | 内容处理和任务执行模型 |
 | `SHIYI_PORT` | `18746` | 本机后台端口 |
 | `SHIYI_HOME` | `~/.shiyi` | 状态、配置与结果目录 |
 | `SHIYI_NATIVE_APP` | `~/Applications/Shiyi.app` | 原生运行副本路径 |
@@ -155,4 +197,4 @@ npm run check:model
 
 </details>
 
-供应商配置：公开 .env.example 默认使用 Kimi；本地 .env 可独立选择其他已支持服务，不进入 Git。Kimi 真实调用仍需对应服务凭据验证。
+不填 key 就是演示模式。真实模型的 key、接口地址和模型名写在项目根目录的 `.env`（由 `.env.example` 复制），不进入 Git。任意 OpenAI 兼容接口都可以。
